@@ -1,30 +1,28 @@
 """
-app.py — Preenchimento automático de orçamentos de licitação (Streamlit)
+core.py — regras de negócio (sem Streamlit e sem banco de dados).
 
-Hierarquia de busca : banco interno  →  SINAPI
-Tipo de busca       : correspondência EXATA após normalização (sem fuzzy matching)
-Execução            : streamlit run app.py
+Normalização, índices de preço, extração de planilhas de licitações passadas
+e preenchimento da planilha da licitação.
 """
 from __future__ import annotations
 
 import io
-import os
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from numbers import Number
 
 import pandas as pd
-import streamlit as st
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import PatternFill
-from openpyxl.utils import get_column_letter
 
 # ----------------------------------------------------------------------------
 # Constantes
 # ----------------------------------------------------------------------------
 TOLERANCIA_VALOR = 0.005  # preços que diferem menos que meio centavo = mesmo preço
+ESTRATEGIAS = ("Mais recente", "Menor preço", "Mediana")
 
 FILL_AMARELO = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 FILL_LARANJA = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
@@ -50,6 +48,29 @@ class ConfigPlanilha:
     col_qtd: int | None = None
 
 
+@dataclass
+class Indice:
+    """Resultado de uma base de preços já pronta para consulta."""
+    valores: dict[str, float] = field(default_factory=dict)          # chave normalizada -> preço
+    conflitos: dict[str, list[float]] = field(default_factory=dict)  # chave -> preços divergentes
+    notas: dict[str, str] = field(default_factory=dict)              # chave -> texto de auditoria
+
+
+@dataclass
+class MapaIngestao:
+    """Como ler uma planilha de licitação passada para alimentar o banco."""
+    linha_cab: int
+    col_desc: int
+    col_valor: int
+    col_codigo: int | None = None
+    col_fornecedor: int | None = None
+    fornecedor_fixo: str | None = None
+    col_vendedor: int | None = None
+    vendedor_fixo: str | None = None
+    col_data: int | None = None
+    data_fixa: date | None = None
+
+
 # ----------------------------------------------------------------------------
 # Normalização e conversões
 # ----------------------------------------------------------------------------
@@ -66,6 +87,15 @@ def normalizar(texto) -> str:
     s = unicodedata.normalize("NFD", str(texto))
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", s.upper()).strip()
+
+
+def texto(valor) -> str:
+    """Texto limpo de uma célula ('' para vazio; 1234.0 vira '1234')."""
+    if valor is None or (not isinstance(valor, str) and pd.isna(valor)):
+        return ""
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor).strip()
 
 
 def para_numero(valor) -> float | None:
@@ -85,6 +115,29 @@ def para_numero(valor) -> float | None:
     return numero if numero == numero and numero > 0 else None  # numero == numero descarta NaN
 
 
+def para_data(valor) -> date | None:
+    """Converte célula em data. Aceita datetime, serial do Excel e textos dd/mm/aaaa ou aaaa-mm-dd."""
+    if valor is None or (not isinstance(valor, str) and pd.isna(valor)):
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    if isinstance(valor, Number) and not isinstance(valor, bool):
+        if 1 <= float(valor) <= 80000:  # serial do Excel
+            return (datetime(1899, 12, 30) + timedelta(days=float(valor))).date()
+        return None
+    partes = str(valor).strip().split()
+    if not partes:
+        return None
+    for formato in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(partes[0], formato).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _mesma_celula(valor_openpyxl, valor_pandas) -> bool:
     """Trava de segurança: confere se a linha lida pelo pandas é a mesma que o openpyxl vai escrever."""
     if isinstance(valor_openpyxl, str) and valor_openpyxl.startswith("="):
@@ -99,23 +152,12 @@ def _fmt_conflito(valores: list[float]) -> str:
 
 
 # ----------------------------------------------------------------------------
-# Leitura (pandas) e índices de busca
+# Índices de preço
 # ----------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def listar_abas(conteudo: bytes) -> list[str]:
-    return pd.ExcelFile(io.BytesIO(conteudo)).sheet_names
+def montar_indice(cfg: ConfigPlanilha) -> Indice:
+    """Índice a partir de uma planilha (usado no SINAPI).
 
-
-@st.cache_data(show_spinner="Lendo planilha...")
-def ler_aba(conteudo: bytes, aba: str) -> pd.DataFrame:
-    # header=None: o índice do DataFrame bate com a linha do Excel (índice + 1)
-    return pd.read_excel(io.BytesIO(conteudo), sheet_name=aba, header=None, dtype=object)
-
-
-def montar_indice(cfg: ConfigPlanilha) -> tuple[dict[str, float], dict[str, list[float]]]:
-    """Retorna (únicos, ambíguos): {descrição normalizada: valor} e {descrição normalizada: [valores]}.
-
-    Se a mesma descrição aparece com preços diferentes, NÃO escolhemos um: vai para 'ambíguos'.
+    Se a mesma descrição aparece com preços diferentes, NÃO escolhemos um: vai para 'conflitos'.
     """
     dados = cfg.raw.iloc[cfg.linha_cab:, [cfg.col_desc, cfg.col_valor]].copy()
     dados.columns = ["desc", "valor"]
@@ -123,24 +165,94 @@ def montar_indice(cfg: ConfigPlanilha) -> tuple[dict[str, float], dict[str, list
     dados["valor"] = dados["valor"].map(para_numero)
     dados = dados[(dados["chave"] != "") & dados["valor"].notna()]
 
-    unicos: dict[str, float] = {}
-    ambiguos: dict[str, list[float]] = {}
+    idx = Indice()
     for chave, grupo in dados.groupby("chave")["valor"]:
         valores = grupo.tolist()
         if max(valores) - min(valores) <= TOLERANCIA_VALOR:
-            unicos[chave] = valores[0]
+            idx.valores[chave] = valores[0]
         else:
-            ambiguos[chave] = sorted(set(valores))
-    return unicos, ambiguos
+            idx.conflitos[chave] = sorted(set(valores))
+    return idx
+
+
+def _nota(n: int, estrategia: str, ref) -> str:
+    partes = [f"{n} registro(s) no banco · critério: {estrategia.lower()}"]
+    if ref is not None:
+        if isinstance(ref["fornecedor"], str) and ref["fornecedor"].strip():
+            partes.append(f"fornecedor: {ref['fornecedor']}")
+        if pd.notna(ref["data_cotacao"]):
+            partes.append(f"data: {ref['data_cotacao']:%d/%m/%Y}")
+    return " · ".join(partes)
+
+
+def montar_indice_banco(df: pd.DataFrame, estrategia: str) -> Indice:
+    """Índice a partir do banco de preços, que pode ter VÁRIOS preços para a mesma descrição.
+
+    A estratégia decide qual preço usar: mais recente, menor preço ou mediana.
+    """
+    idx = Indice()
+    if df.empty:
+        return idx
+    d = df[["id", "descricao_norm", "valor_unitario", "fornecedor", "data_cotacao"]].copy()
+    d["data_cotacao"] = pd.to_datetime(d["data_cotacao"], errors="coerce")
+    for chave, g in d.groupby("descricao_norm"):
+        if estrategia == "Menor preço":
+            ref = g.loc[g["valor_unitario"].idxmin()]
+            valor = float(ref["valor_unitario"])
+        elif estrategia == "Mediana":
+            ref, valor = None, float(g["valor_unitario"].median())
+        else:  # Mais recente: maior data; sem data fica por último; empate = cadastrado por último
+            ref = g.sort_values(["data_cotacao", "id"], ascending=False, na_position="last").iloc[0]
+            valor = float(ref["valor_unitario"])
+        idx.valores[chave] = valor
+        idx.notas[chave] = _nota(len(g), estrategia, ref)
+    return idx
+
+
+# ----------------------------------------------------------------------------
+# Extração de planilhas de licitações passadas (para alimentar o banco)
+# ----------------------------------------------------------------------------
+def extrair_registros(raw: pd.DataFrame, m: MapaIngestao) -> tuple[list[dict], list[dict]]:
+    """Retorna (válidos, ignorados). Linhas totalmente vazias são descartadas em silêncio."""
+    validos: list[dict] = []
+    ignorados: list[dict] = []
+
+    def celula(i: int, col: int | None):
+        return None if col is None else raw.iat[i, col]
+
+    for i in range(m.linha_cab, len(raw)):
+        descricao = texto(raw.iat[i, m.col_desc])
+        bruto = raw.iat[i, m.col_valor]
+        valor = para_numero(bruto)
+        if not descricao and not texto(bruto):
+            continue
+        base = {"Linha Excel": i + 1, "Descrição": descricao, "Valor (original)": texto(bruto)}
+        if not descricao:
+            ignorados.append({**base, "Motivo": "Sem descrição"})
+            continue
+        if valor is None:
+            ignorados.append({**base, "Motivo": "Sem valor unitário válido (vazio, zero ou texto)"})
+            continue
+
+        fornecedor = texto(celula(i, m.col_fornecedor)) if m.col_fornecedor is not None else (m.fornecedor_fixo or "")
+        vendedor = texto(celula(i, m.col_vendedor)) if m.col_vendedor is not None else (m.vendedor_fixo or "")
+        data = para_data(celula(i, m.col_data)) if m.col_data is not None else m.data_fixa
+        validos.append({
+            "linha_excel": i + 1,
+            "codigo": texto(celula(i, m.col_codigo)),
+            "descricao": descricao,
+            "valor_unitario": valor,
+            "fornecedor": fornecedor,
+            "vendedor": vendedor,
+            "data_cotacao": data,
+        })
+    return validos, ignorados
 
 
 # ----------------------------------------------------------------------------
 # Preenchimento (escrita com openpyxl para preservar a formatação original)
 # ----------------------------------------------------------------------------
-def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno, sinapi, sobrescrever: bool):
-    ok_int, amb_int = interno
-    ok_sin, amb_sin = sinapi
-
+def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi: Indice, sobrescrever: bool):
     wb = load_workbook(io.BytesIO(conteudo_lic))
     ws = wb[cfg.aba]
     registros = []
@@ -164,14 +276,14 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno, sinapi, sobresc
 
         # Hierarquia: banco interno -> SINAPI (correspondência exata da chave normalizada)
         valor, fonte, status, obs = None, "", ST_NAO, ""
-        if chave in ok_int:
-            valor, fonte, status = ok_int[chave], FONTE_INTERNO, ST_OK
-        elif chave in amb_int:  # existe no interno com preços conflitantes: não cai para o SINAPI
-            fonte, status, obs = FONTE_INTERNO, ST_AMB, _fmt_conflito(amb_int[chave])
-        elif chave in ok_sin:
-            valor, fonte, status = ok_sin[chave], FONTE_SINAPI, ST_OK
-        elif chave in amb_sin:
-            fonte, status, obs = FONTE_SINAPI, ST_AMB, _fmt_conflito(amb_sin[chave])
+        if chave in interno.valores:
+            valor, fonte, status, obs = interno.valores[chave], FONTE_INTERNO, ST_OK, interno.notas.get(chave, "")
+        elif chave in interno.conflitos:  # existe no interno com preços conflitantes: não cai para o SINAPI
+            fonte, status, obs = FONTE_INTERNO, ST_AMB, _fmt_conflito(interno.conflitos[chave])
+        elif chave in sinapi.valores:
+            valor, fonte, status = sinapi.valores[chave], FONTE_SINAPI, ST_OK
+        elif chave in sinapi.conflitos:
+            fonte, status, obs = FONTE_SINAPI, ST_AMB, _fmt_conflito(sinapi.conflitos[chave])
 
         if isinstance(c_valor, MergedCell):
             valor, status = None, ST_MESCLADA
@@ -198,148 +310,8 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno, sinapi, sobresc
     return saida.getvalue(), pd.DataFrame(registros, columns=COLUNAS_RELATORIO)
 
 
-def df_para_xlsx(df: pd.DataFrame) -> bytes:
+def df_para_xlsx(df: pd.DataFrame, nome_aba: str = "Relatório") -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as escritor:
-        df.to_excel(escritor, index=False, sheet_name="Relatório")
+        df.to_excel(escritor, index=False, sheet_name=nome_aba)
     return buf.getvalue()
-
-
-# ----------------------------------------------------------------------------
-# Interface
-# ----------------------------------------------------------------------------
-def detectar_cabecalho(raw: pd.DataFrame) -> int:
-    """Primeira linha (até a 40ª) que contém 'DESCRI...'; senão, linha 1."""
-    for i in range(min(40, len(raw))):
-        if any("DESCRI" in normalizar(v) for v in raw.iloc[i]):
-            return i + 1
-    return 1
-
-
-def opcoes_colunas(raw: pd.DataFrame, linha_cab: int) -> dict[int, str]:
-    cab = raw.iloc[linha_cab - 1]
-    opcoes = {}
-    for j in range(raw.shape[1]):
-        titulo = "" if pd.isna(cab.iloc[j]) else str(cab.iloc[j])[:60]
-        opcoes[j] = f"{get_column_letter(j + 1)} · {titulo}".rstrip(" ·")
-    return opcoes
-
-
-def sugerir(opcoes: dict[int, str], palavras: tuple[str, ...]) -> int | None:
-    for j, rotulo in opcoes.items():
-        if any(p in normalizar(rotulo) for p in palavras):
-            return j
-    return None
-
-
-def configurar(titulo, arquivo, prefixo, rotulo_valor, usar_qtd=False) -> ConfigPlanilha | None:
-    conteudo = arquivo.getvalue()
-    with st.expander(titulo, expanded=True):
-        c1, c2 = st.columns(2)
-        aba = c1.selectbox("Aba", listar_abas(conteudo), key=f"{prefixo}_aba")
-        raw = ler_aba(conteudo, aba)
-        if raw.empty:
-            st.error("A aba selecionada está vazia.")
-            return None
-
-        linha_cab = int(c2.number_input(
-            "Linha do cabeçalho (nº da linha no Excel)", min_value=1, max_value=len(raw),
-            value=detectar_cabecalho(raw), step=1, key=f"{prefixo}_cab_{aba}"))
-        opcoes = opcoes_colunas(raw, linha_cab)
-        chave_w = f"{prefixo}_{aba}_{linha_cab}"  # muda ao trocar aba/cabeçalho -> recalcula sugestões
-
-        cols = st.columns(3 if usar_qtd else 2)
-        col_desc = cols[0].selectbox(
-            "Coluna de Descrição/Especificação", list(opcoes), format_func=opcoes.get,
-            index=sugerir(opcoes, ("DESCRI", "ESPECIFIC")) or 0, key=f"desc_{chave_w}")
-        col_valor = cols[1].selectbox(
-            rotulo_valor, list(opcoes), format_func=opcoes.get,
-            index=sugerir(opcoes, ("VALOR UNIT", "PRECO UNIT", "CUSTO UNIT", "UNITARIO")) or 0,
-            key=f"valor_{chave_w}")
-        col_qtd = None
-        if usar_qtd:
-            s = sugerir(opcoes, ("QUANT", "QTD"))
-            col_qtd = cols[2].selectbox(
-                "Coluna de Quantidade (opcional)", [None] + list(opcoes),
-                format_func=lambda j: "(não usar)" if j is None else opcoes[j],
-                index=0 if s is None else s + 1, key=f"qtd_{chave_w}",
-                help="Linhas sem quantidade são tratadas como títulos de grupo e ignoradas.")
-
-        prev = raw.head(15).astype(str).replace({"nan": "", "None": "", "NaT": ""})
-        prev.columns = [get_column_letter(j + 1) for j in range(prev.shape[1])]
-        prev.index = range(1, len(prev) + 1)
-        st.caption("Pré-visualização (letras e números = os do Excel):")
-        st.dataframe(prev)
-
-    return ConfigPlanilha(raw, aba, linha_cab, col_desc, col_valor, col_qtd)
-
-
-def exibir_resultado(res: dict) -> None:
-    rel: pd.DataFrame = res["relatorio"]
-    ok = rel["Status"] == ST_OK
-
-    st.subheader("Resultado")
-    m = st.columns(5)
-    m[0].metric("Itens analisados", len(rel))
-    m[1].metric("Do banco interno", int((ok & (rel["Fonte"] == FONTE_INTERNO)).sum()))
-    m[2].metric("Do SINAPI", int((ok & (rel["Fonte"] == FONTE_SINAPI)).sum()))
-    m[3].metric("Não encontrados (amarelo)", int((rel["Status"] == ST_NAO).sum()))
-    m[4].metric("Ambíguos / outros (laranja)", int(rel["Status"].isin([ST_AMB, ST_MESCLADA]).sum()))
-
-    d1, d2 = st.columns(2)
-    d1.download_button(
-        "⬇️ Baixar planilha preenchida (.xlsx)", data=res["xlsx"], file_name=res["nome"],
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-    d2.download_button(
-        "⬇️ Baixar relatório de auditoria (.xlsx)", data=df_para_xlsx(rel),
-        file_name=res["nome"].replace("_preenchida", "_relatorio"),
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    def pintar(linha):
-        cor = COR_STATUS.get(linha["Status"])
-        return [f"background-color: {cor}; color: black" if cor else ""] * len(linha)
-
-    st.dataframe(rel.style.apply(pintar, axis=1).format({"Valor unitário": "{:,.2f}"}, na_rep=""))
-
-
-def main() -> None:
-    st.set_page_config(page_title="Orçamento de Licitação", page_icon="📊", layout="wide")
-    st.title("📊 Preenchimento automático de orçamento de licitação")
-    st.caption("Correspondência exata (após normalização) · 1º banco interno, 2º SINAPI · sem fuzzy matching.")
-
-    u1, u2, u3 = st.columns(3)
-    f_lic = u1.file_uploader("1 · Planilha da licitação", type=["xlsx"])
-    f_int = u2.file_uploader("2 · Banco de dados interno", type=["xlsx", "xlsm", "xls"])
-    f_sin = u3.file_uploader("3 · Tabela SINAPI", type=["xlsx", "xlsm", "xls"])
-    if not (f_lic and f_int and f_sin):
-        st.info("Envie os três arquivos para continuar.")
-        return
-
-    st.subheader("Configuração das colunas")
-    cfg_lic = configurar("Planilha da licitação", f_lic, "lic", "Coluna de valor unitário (destino)", usar_qtd=True)
-    cfg_int = configurar("Banco de dados interno", f_int, "int", "Coluna de valor unitário")
-    cfg_sin = configurar("SINAPI", f_sin, "sin", "Coluna de preço (escolha a sua UF / regime)")
-    if any(c is None for c in (cfg_lic, cfg_int, cfg_sin)):
-        return
-
-    sobrescrever = st.checkbox("Sobrescrever valores que já existem na coluna de destino", value=False)
-
-    if st.button("⚙️ Processar", type="primary"):
-        st.session_state.pop("resultado", None)
-        with st.spinner("Processando..."):
-            try:
-                xlsx, rel = preencher(
-                    f_lic.getvalue(), cfg_lic, montar_indice(cfg_int), montar_indice(cfg_sin), sobrescrever)
-            except ValueError as erro:
-                st.error(str(erro))
-                return
-        base = os.path.splitext(f_lic.name)[0]
-        st.session_state["resultado"] = {"xlsx": xlsx, "relatorio": rel, "nome": f"{base}_preenchida.xlsx"}
-
-    # o resultado fica no session_state para sobreviver ao rerun causado pelo clique no download
-    if "resultado" in st.session_state:
-        exibir_resultado(st.session_state["resultado"])
-
-
-if __name__ == "__main__":
-    main()
