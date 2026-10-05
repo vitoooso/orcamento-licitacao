@@ -520,7 +520,7 @@ def tela_cadastrar(engine) -> None:
     data_fixa = None
     if cols["data"] is None:
         data_fixa = c2.date_input("Data da cotação (vale para todos os itens)", value=None, format="DD/MM/YYYY",
-                                  key=f"{selecao.chave}_data")
+                                  key=f"{selecao.chave}_fixo_data")
     else:
         c2.caption(f"Data da cotação lida da coluna {letra(cols['data'])}.")
     c3, c4 = st.columns(2)
