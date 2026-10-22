@@ -17,6 +17,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import PatternFill
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 # ----------------------------------------------------------------------------
 # Constantes
@@ -151,6 +152,18 @@ def para_data(valor) -> date | None:
 _TEXTO_SEM_PRECO = re.compile(r"^(R\$)?\s*([-\u2013\u2014]+|[-\u2013\u2014]?\s*0+([.,]0+)?)?$", re.IGNORECASE)
 
 
+ERROS_EXCEL = {"#N/A", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!", "#GETTING_DATA"}
+
+
+def eh_formula(valor) -> bool:
+    """Fórmula comum ('=A1*B1') ou de matriz (o Excel 365 salva muitas fórmulas assim)."""
+    return isinstance(valor, (ArrayFormula, DataTableFormula)) or (isinstance(valor, str) and valor.startswith("="))
+
+
+def _texto_formula(valor) -> str:
+    return getattr(valor, "text", None) or str(valor)
+
+
 def valor_vazio(valor) -> bool:
     """A célula de valor está 'sem preço'? Vazia, espaços, zero, 'R$ 0,00', '-' e 'R$ -' contam como sem preço.
 
@@ -169,9 +182,43 @@ def valor_vazio(valor) -> bool:
 
 
 def _fmt_existente(valor) -> str:
+    if eh_formula(valor):
+        return _texto_formula(valor)
     if isinstance(valor, Number) and not isinstance(valor, bool):
         return "R$ " + f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return str(valor)
+
+
+def _tem_resultados_salvos(ws, ws_calc) -> bool:
+    """A aba foi calculada e salva pelo Excel? (alguma fórmula tem resultado gravado no arquivo)"""
+    for linha in ws.iter_rows():
+        for c in linha:
+            if eh_formula(c.value) and ws_calc.cell(row=c.row, column=c.column).value is not None:
+                return True
+    return False
+
+
+def _celula_sem_preco(valor, calculado, aba_calculada: bool) -> bool:
+    """Decide se a célula de valor deve ser preenchida.
+
+    Para fórmulas, vale o RESULTADO salvo pelo Excel: zero, vazio ou erro (#N/A, #DIV/0!...) = sem preço.
+    Se a aba nunca foi calculada (arquivo gerado por outro programa), a fórmula é mantida, por segurança.
+    """
+    if not eh_formula(valor):
+        return valor_vazio(valor)
+    if calculado is None:  # o Excel grava resultado "" como ausente; só confiamos nisso se a aba foi calculada
+        return aba_calculada
+    if isinstance(calculado, str) and calculado.strip().upper() in ERROS_EXCEL:
+        return True
+    return valor_vazio(calculado)
+
+
+def _descrever_existente(valor, calculado) -> str:
+    if not eh_formula(valor):
+        return _fmt_existente(valor)
+    if calculado is None:
+        return f"fórmula {_texto_formula(valor)} sem resultado salvo (abra e salve no Excel e envie de novo)"
+    return f"{_fmt_existente(calculado)} (fórmula)"
 
 
 _CORES_DO_APP = {"FFFF00", "FFC000"}
@@ -186,8 +233,8 @@ def _limpar_destaque(celula) -> None:
 
 def _mesma_celula(valor_openpyxl, valor_pandas) -> bool:
     """Trava de segurança: confere se a linha lida pelo pandas é a mesma que o openpyxl vai escrever."""
-    if isinstance(valor_openpyxl, str) and valor_openpyxl.startswith("="):
-        return True  # fórmula: o openpyxl não expõe o resultado calculado
+    if eh_formula(valor_openpyxl):
+        return True  # fórmula: o resultado foi conferido pela leitura com valores calculados
     if normalizar(valor_openpyxl) == normalizar(valor_pandas):
         return True
     return isinstance(valor_openpyxl, Number) and isinstance(valor_pandas, Number) and valor_openpyxl == valor_pandas
@@ -301,6 +348,9 @@ def extrair_registros(raw: pd.DataFrame, m: MapaIngestao) -> tuple[list[dict], l
 def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi: Indice, sobrescrever: bool):
     wb = load_workbook(io.BytesIO(conteudo_lic))
     ws = wb[cfg.aba]
+    # Segunda leitura só para ver o RESULTADO das fórmulas (o valor que o Excel salvou no arquivo).
+    ws_calc = load_workbook(io.BytesIO(conteudo_lic), data_only=True)[cfg.aba]
+    aba_calculada = _tem_resultados_salvos(ws, ws_calc)
     registros = []
 
     for i in range(cfg.linha_cab, len(cfg.raw)):  # i base 0 -> linha Excel = i + 1
@@ -333,8 +383,9 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi:
 
         if isinstance(c_valor, MergedCell):
             valor, status = None, ST_MESCLADA
-        elif not valor_vazio(c_valor.value):  # já existe um preço (ou fórmula/texto) na célula
-            existente = _fmt_existente(c_valor.value)
+        elif not _celula_sem_preco(c_valor.value, calculado := ws_calc.cell(row=linha, column=cfg.col_valor + 1).value,
+                                   aba_calculada):
+            existente = _descrever_existente(c_valor.value, calculado)
             if not sobrescrever:
                 motivo = {ST_NAO: " (item não encontrado nas bases)",
                           ST_AMB: " (bases com preços conflitantes)"}.get(status, "")
@@ -342,6 +393,13 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi:
             elif status != ST_OK:  # pediu para substituir, mas não há preço novo: mantém o antigo e destaca
                 obs = f"{obs}; valor existente mantido: {existente}" if obs else f"Valor existente mantido: {existente}"
 
+        if status == ST_OK and eh_formula(c_valor.value):
+            aviso = f"Substituiu a fórmula {_texto_formula(c_valor.value)}"
+            if not _celula_sem_preco(c_valor.value, ws_calc.cell(row=linha, column=cfg.col_valor + 1).value, aba_calculada):
+                aviso += " (tinha valor; substituída a pedido)"
+            else:
+                aviso += " (resultava em zero, vazio ou erro)"
+            obs = f"{obs}; {aviso}" if obs else aviso
         if status == ST_OK:
             c_valor.value = valor
             if c_valor.number_format == "General":
