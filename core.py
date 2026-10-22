@@ -99,15 +99,25 @@ def texto(valor) -> str:
 
 
 def para_numero(valor) -> float | None:
-    """Converte para float (aceita 'R$ 1.234,56'). Vazio, NaN, '-', zero e negativos -> None."""
+    """Converte para float. Aceita 'R$ 1.234,56', '1.234', '1,234.56'. Vazio, NaN, '-', zero e negativos -> None."""
     if valor is None or isinstance(valor, bool):
         return None
     if isinstance(valor, Number):
         numero = float(valor)
     else:
-        txt = re.sub(r"[^\d,.\-]", "", str(valor))
-        if "," in txt:  # formato brasileiro: '.' = milhar, ',' = decimal
-            txt = txt.replace(".", "").replace(",", ".")
+        bruto = str(valor).strip()
+        if bruto.startswith("(") and bruto.endswith(")"):
+            return None  # (1.234,56) = negativo em formato contábil
+        txt = re.sub(r"[^\d,.\-]", "", bruto)
+        if "," in txt and "." in txt:
+            if txt.rfind(",") > txt.rfind("."):  # 1.234,56 (brasileiro)
+                txt = txt.replace(".", "").replace(",", ".")
+            else:                                # 1,234.56 (americano)
+                txt = txt.replace(",", "")
+        elif "," in txt:                         # 15,9 ou 1.234,56 sem milhar
+            txt = txt.replace(",", ".")
+        elif re.fullmatch(r"-?\d{1,3}(\.\d{3})+", txt):  # 1.234 ou 12.345.678 = só milhar
+            txt = txt.replace(".", "")
         try:
             numero = float(txt)
         except ValueError:
@@ -136,6 +146,42 @@ def para_data(valor) -> date | None:
         except ValueError:
             continue
     return None
+
+
+_TEXTO_SEM_PRECO = re.compile(r"^(R\$)?\s*([-\u2013\u2014]+|[-\u2013\u2014]?\s*0+([.,]0+)?)?$", re.IGNORECASE)
+
+
+def valor_vazio(valor) -> bool:
+    """A célula de valor está 'sem preço'? Vazia, espaços, zero, 'R$ 0,00', '-' e 'R$ -' contam como sem preço.
+
+    Fórmulas e textos como 'Incluso no item 1' NÃO contam: são mantidos (a não ser que o usuário peça para substituir).
+    """
+    if valor is None:
+        return True
+    if isinstance(valor, bool):
+        return False
+    if isinstance(valor, Number):
+        return valor == 0 or valor != valor  # zero ou NaN
+    if isinstance(valor, str):
+        txt = valor.strip()
+        return not txt.startswith("=") and bool(_TEXTO_SEM_PRECO.match(txt))
+    return False
+
+
+def _fmt_existente(valor) -> str:
+    if isinstance(valor, Number) and not isinstance(valor, bool):
+        return "R$ " + f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return str(valor)
+
+
+_CORES_DO_APP = {"FFFF00", "FFC000"}
+
+
+def _limpar_destaque(celula) -> None:
+    """Remove o amarelo/laranja que o próprio app pintou numa rodada anterior."""
+    fill = celula.fill
+    if fill is not None and fill.fill_type == "solid" and str(fill.start_color.rgb)[-6:].upper() in _CORES_DO_APP:
+        celula.fill = PatternFill(fill_type=None)
 
 
 def _mesma_celula(valor_openpyxl, valor_pandas) -> bool:
@@ -287,13 +333,24 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi:
 
         if isinstance(c_valor, MergedCell):
             valor, status = None, ST_MESCLADA
-        elif status == ST_OK and c_valor.value not in (None, "") and not sobrescrever:
-            valor, status, obs = None, ST_JA, f"Valor existente: {c_valor.value}"
+        elif not valor_vazio(c_valor.value):  # já existe um preço (ou fórmula/texto) na célula
+            existente = _fmt_existente(c_valor.value)
+            if not sobrescrever:
+                motivo = {ST_NAO: " (item não encontrado nas bases)",
+                          ST_AMB: " (bases com preços conflitantes)"}.get(status, "")
+                valor, status, obs = None, ST_JA, f"Valor existente: {existente}{motivo}"
+            elif status != ST_OK:  # pediu para substituir, mas não há preço novo: mantém o antigo e destaca
+                obs = f"{obs}; valor existente mantido: {existente}" if obs else f"Valor existente mantido: {existente}"
 
         if status == ST_OK:
             c_valor.value = valor
             if c_valor.number_format == "General":
                 c_valor.number_format = "#,##0.00"
+            _limpar_destaque(c_desc)
+            _limpar_destaque(c_valor)
+        elif status == ST_JA:
+            _limpar_destaque(c_desc)
+            _limpar_destaque(c_valor)
         elif status in (ST_NAO, ST_AMB, ST_MESCLADA):  # exige preenchimento manual -> destaca
             fill = FILL_AMARELO if status == ST_NAO else FILL_LARANJA
             c_desc.fill = fill
