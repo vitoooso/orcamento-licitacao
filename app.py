@@ -34,6 +34,7 @@ AZUL = "#1565A8"
 NEVOA = "#EEF3F8"
 TINTA = "#16263A"
 CINZA_TEXTO = "#5A6B7D"
+BORDA = "#D5DDE6"
 
 # As cores dos status são as MESMAS que o core.py pinta no Excel.
 COR_BARRA = {core.ST_OK: AZUL, **core.COR_STATUS}
@@ -48,41 +49,105 @@ LEGENDA_STATUS = {
     core.ST_JA: "já tinham valor (mantidos)",
 }
 
+ONDAS = (
+    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='20' viewBox='0 0 160 20'%3E"
+    "%3Cpath d='M0 10 Q40 0 80 10 T160 10' fill='none' stroke='%23ffffff' stroke-width='1.4'/%3E%3C/svg%3E\")"
+)
+
 CSS = f"""
 <style>
-.block-container {{ padding-top: 1.5rem; max-width: 1180px; }}
+/* ---- Estrutura da página ---- */
+header[data-testid="stHeader"] {{ background: rgba(255, 255, 255, .9); backdrop-filter: blur(6px); }}
+.block-container {{ padding-top: 4.5rem; padding-bottom: 3rem; max-width: 1120px; }}
 
-.atl-topo {{
-  display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;
-  padding: 0 0 1rem; margin-bottom: 1.5rem; border-bottom: 3px solid {AZUL_MARINHO};
+/* ---- Faixa de topo ---- */
+.atl-hero {{
+  position: relative; overflow: hidden; display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
+  background: {AZUL_MARINHO}; color: #FFFFFF; border-radius: 12px; padding: 1.4rem 1.75rem 2.1rem;
+  margin-bottom: .75rem;
 }}
-.atl-topo img {{ height: 52px; width: auto; display: block; }}
-.atl-marca {{ font-size: 1.35rem; font-weight: 700; color: {AZUL_MARINHO}; }}
-.atl-titulo {{ border-left: 1px solid #C9D3DE; padding-left: 1.25rem; }}
-.atl-titulo .nome {{ font-size: 1.2rem; font-weight: 600; color: {TINTA}; line-height: 1.3; }}
-.atl-titulo .sub {{ font-size: .9rem; color: {CINZA_TEXTO}; }}
+.atl-hero::after {{
+  content: ""; position: absolute; left: 0; right: 0; bottom: 6px; height: 30px; opacity: .16; pointer-events: none;
+  background-image: {ONDAS}, {ONDAS};
+  background-repeat: repeat-x; background-size: 160px 20px; background-position: 0 0, 80px 10px;
+}}
+.atl-logo {{ background: #FFFFFF; border-radius: 8px; padding: .55rem .85rem; display: flex; align-items: center; }}
+.atl-logo img {{ height: 46px; width: auto; display: block; }}
+.atl-marca {{ color: {AZUL_MARINHO}; font-weight: 700; font-size: 1.05rem; line-height: 1.15; }}
+.atl-marca small {{ display: block; font-weight: 500; font-size: .78rem; color: {CINZA_TEXTO}; }}
+.atl-hero-texto .nome {{ font-size: 1.55rem; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; }}
+.atl-hero-texto .sub {{ font-size: .95rem; opacity: .8; margin-top: .15rem; }}
 .atl-banco {{
-  margin-left: auto; font-size: .85rem; padding: .35rem .8rem; border-radius: 999px;
-  background: {NEVOA}; color: {TINTA}; white-space: nowrap;
+  margin-left: auto; display: inline-flex; align-items: center; gap: .5rem; font-size: .85rem;
+  padding: .4rem .85rem; border-radius: 999px; background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .22); white-space: nowrap;
 }}
-.atl-banco.alerta {{ background: #FFF4D6; color: #7A5300; }}
+.atl-banco::before {{ content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: var(--cor-ponto); }}
 
-.atl-resumo {{ font-size: 1.05rem; color: {TINTA}; margin: .25rem 0 0; }}
-.atl-resumo strong {{ font-size: 2rem; color: {AZUL_MARINHO}; font-weight: 700; margin-right: .35rem; }}
+/* ---- Abas ---- */
+.stTabs [data-baseweb="tab-list"] {{ gap: .5rem; border-bottom: 1px solid {BORDA}; }}
+.stTabs [data-baseweb="tab"] {{ padding: .85rem .9rem .7rem; }}
+.stTabs [data-baseweb="tab"] p {{ font-size: 1rem; font-weight: 500; }}
+.stTabs [aria-selected="true"] p {{ color: {AZUL_MARINHO}; font-weight: 600; }}
+.stTabs [data-baseweb="tab-panel"] {{ padding-top: 1.75rem; }}
+
+/* ---- Passos em linha do tempo ---- */
+[class*="st-key-etapa_"] {{ position: relative; padding: 0 0 2rem 3.25rem; }}
+[class*="st-key-etapa_"]::before {{
+  content: ""; position: absolute; left: 1.05rem; top: 2.6rem; bottom: .4rem; width: 2px; background: {BORDA};
+}}
+.atl-etapa-cab {{ display: flex; align-items: center; gap: 1rem; margin: 0 0 .35rem -3.25rem; }}
+.atl-num {{
+  flex: none; width: 2.2rem; height: 2.2rem; border-radius: 50%; display: grid; place-items: center;
+  background: {AZUL_MARINHO}; color: #FFFFFF; font-weight: 600; font-size: 1rem;
+}}
+.atl-etapa-titulo {{ font-size: 1.22rem; font-weight: 600; color: {TINTA}; line-height: 1.25; }}
+.atl-etapa-desc {{ font-size: .92rem; color: {CINZA_TEXTO}; margin-top: .1rem; max-width: 70ch; }}
+
+/* ---- Envio de arquivo e botões ---- */
+[data-testid="stFileUploaderDropzone"] {{
+  border: 1.5px dashed #A9BBCD; background: #F6F9FC; border-radius: 10px; padding: 1.1rem 1.25rem;
+}}
+[data-testid="stBaseButton-primary"] {{ padding: .6rem 1.4rem; font-weight: 600; }}
+
+/* ---- Como funciona (tela inicial) ---- */
+.atl-como {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem 2rem; margin: 1.1rem 0 .25rem; }}
+.atl-como div {{ border-left: 3px solid {AZUL}; padding: .1rem 0 .1rem .9rem; }}
+.atl-como b {{ display: block; color: {TINTA}; font-weight: 600; margin-bottom: .15rem; }}
+.atl-como span {{ color: {CINZA_TEXTO}; font-size: .92rem; line-height: 1.45; }}
+
+/* ---- Resultado ---- */
+.atl-resultado {{ background: {NEVOA}; border-radius: 10px; padding: 1.1rem 1.35rem .9rem; margin-bottom: 1rem; }}
+.atl-resumo {{ font-size: 1.05rem; color: {TINTA}; margin: 0; }}
+.atl-resumo strong {{ font-size: 2.1rem; color: {AZUL_MARINHO}; font-weight: 700; margin-right: .4rem; }}
 .atl-barra {{
-  display: flex; height: 20px; border-radius: 3px; overflow: hidden;
-  background: #E6EBF0; margin: .6rem 0 .7rem; border: 1px solid #D5DDE6;
+  display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: #DDE4EB;
+  margin: .65rem 0 .75rem; border: 1px solid #CBD5E0;
 }}
 .atl-barra span {{ display: block; height: 100%; }}
-.atl-legenda {{ display: flex; flex-wrap: wrap; gap: .35rem 1.4rem; font-size: .9rem; color: {TINTA}; margin-bottom: 1rem; }}
+.atl-legenda {{ display: flex; flex-wrap: wrap; gap: .35rem 1.4rem; font-size: .9rem; color: {TINTA}; }}
 .atl-legenda i {{
   display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .4rem;
   vertical-align: -1px; border: 1px solid rgba(0, 0, 0, .18);
 }}
 
-@media (max-width: 640px) {{
-  .atl-titulo {{ border-left: 0; padding-left: 0; }}
+/* ---- Estados vazios e rodapé ---- */
+.atl-vazio {{
+  border: 1px solid {BORDA}; border-radius: 10px; padding: 2rem 2rem 1.75rem; max-width: 640px;
+  background: #FFFFFF;
+}}
+.atl-vazio .titulo {{ font-size: 1.15rem; font-weight: 600; color: {TINTA}; margin-bottom: .35rem; }}
+.atl-vazio p {{ color: {CINZA_TEXTO}; margin: 0; line-height: 1.55; }}
+.atl-rodape {{
+  margin-top: 3rem; padding-top: 1rem; border-top: 1px solid {BORDA}; font-size: .82rem; color: {CINZA_TEXTO};
+}}
+
+@media (max-width: 720px) {{
+  .atl-hero {{ padding: 1.2rem 1.2rem 2rem; }}
   .atl-banco {{ margin-left: 0; }}
+  .atl-como {{ grid-template-columns: 1fr; }}
+  [class*="st-key-etapa_"] {{ padding-left: 2.75rem; }}
+  .atl-etapa-cab {{ margin-left: -2.75rem; }}
 }}
 </style>
 """
@@ -117,7 +182,7 @@ def arquivo_logo() -> Path | None:
 def logo_html() -> str:
     caminho = arquivo_logo()
     if caminho is None:
-        return '<span class="atl-marca">Atlântico Engenharia</span>'
+        return '<span class="atl-marca">Atlântico<small>Engenharia e Inovação</small></span>'
     mime = {"svg": "image/svg+xml", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(caminho.suffix[1:], f"image/{caminho.suffix[1:]}")
     b64 = base64.b64encode(caminho.read_bytes()).decode()
     return f'<img src="data:{mime};base64,{b64}" alt="Atlântico Engenharia">'
@@ -307,20 +372,41 @@ def carregar_banco(_engine) -> pd.DataFrame:
 
 
 # ----------------------------------------------------------------------------
-# Componentes
 # ----------------------------------------------------------------------------
-def topo(engine, banco: pd.DataFrame | None) -> None:
+# Componentes visuais
+# ----------------------------------------------------------------------------
+def etapa(prefixo: str, numero: int, titulo: str, descricao: str = ""):
+    """Bloco de um passo do fluxo, com número em círculo ligado ao próximo passo."""
+    caixa = st.container(key=f"etapa_{prefixo}_{numero}")
+    desc = f'<div class="atl-etapa-desc">{html.escape(descricao)}</div>' if descricao else ""
+    caixa.markdown(
+        f'<div class="atl-etapa-cab"><span class="atl-num">{numero}</span>'
+        f'<div><div class="atl-etapa-titulo">{html.escape(titulo)}</div>{desc}</div></div>',
+        unsafe_allow_html=True,
+    )
+    return caixa
+
+
+def estado_vazio(titulo: str, texto_html: str) -> None:
+    st.markdown(f'<div class="atl-vazio"><div class="titulo">{html.escape(titulo)}</div><p>{texto_html}</p></div>',
+                unsafe_allow_html=True)
+
+
+def topo(engine, banco: pd.DataFrame | None, erro: Exception | None) -> None:
     if engine is None or banco is None:
-        estado, classe = "Banco de preços indisponível", "atl-banco alerta"
+        estado, cor = "Banco de preços offline", "#F5B841"
     elif not storage.eh_remoto(engine):
-        estado, classe = f"Banco temporário (teste): {fmt_int(len(banco))} preços", "atl-banco alerta"
+        estado, cor = f"Banco temporário (teste): {fmt_int(len(banco))} preços", "#F5B841"
     else:
-        estado, classe = f"Banco de preços: {fmt_int(len(banco))} registros", "atl-banco"
+        estado, cor = f"Banco de preços: {fmt_int(len(banco))} registros", "#4CC38A"
+    dica = f"Erro de conexão: {type(erro).__name__}" if erro is not None else estado
     st.markdown(
-        f"""<div class="atl-topo">{logo_html()}
-        <div class="atl-titulo"><div class="nome">Orçamento de licitações</div>
-        <div class="sub">Preenchimento de planilhas com o banco de preços da empresa e o SINAPI</div></div>
-        <div class="{classe}">{html.escape(estado)}</div></div>""",
+        f"""<div class="atl-hero">
+          <div class="atl-logo">{logo_html()}</div>
+          <div class="atl-hero-texto"><div class="nome">Orçamento de licitações</div>
+            <div class="sub">Preencha planilhas com o banco de preços da empresa e a tabela SINAPI</div></div>
+          <div class="atl-banco" style="--cor-ponto:{cor}" title="{html.escape(dica)}">{html.escape(estado)}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
@@ -332,12 +418,15 @@ def barra_cobertura(contagem: pd.Series, total: int) -> None:
         n = int(contagem.get(status, 0))
         if not n:
             continue
-        segmentos.append(f'<span style="width:{n / total * 100:.3f}%;background:{COR_BARRA[status]}" title="{n} {LEGENDA_STATUS[status]}"></span>')
+        segmentos.append(f'<span style="width:{n / total * 100:.3f}%;background:{COR_BARRA[status]}" '
+                         f'title="{n} {LEGENDA_STATUS[status]}"></span>')
         legenda.append(f'<span><i style="background:{COR_BARRA[status]}"></i>{fmt_int(n)} {LEGENDA_STATUS[status]}</span>')
     st.markdown(
-        f"""<p class="atl-resumo"><strong>{fmt_int(ok)}</strong>de {fmt_int(total)} itens preenchidos</p>
-        <div class="atl-barra" role="img" aria-label="{ok} de {total} itens preenchidos">{''.join(segmentos)}</div>
-        <div class="atl-legenda">{''.join(legenda)}</div>""",
+        f"""<div class="atl-resultado">
+          <p class="atl-resumo"><strong>{fmt_int(ok)}</strong>de {fmt_int(total)} itens preenchidos</p>
+          <div class="atl-barra" role="img" aria-label="{ok} de {total} itens preenchidos">{''.join(segmentos)}</div>
+          <div class="atl-legenda">{''.join(legenda)}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
@@ -362,112 +451,109 @@ def tabela_relatorio(df: pd.DataFrame) -> None:
     )
 
 
+COMO_FUNCIONA = """<div class="atl-como">
+  <div><b>Envie a planilha</b><span>O arquivo .xlsx da licitação, do jeito que veio do órgão.</span></div>
+  <div><b>Confira as colunas</b><span>Descrição, valor e quantidade são encontrados sozinhos. Você só confirma.</span></div>
+  <div><b>Baixe preenchida</b><span>Os itens sem preço saem destacados em amarelo ou laranja para revisão.</span></div>
+</div>"""
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 # ----------------------------------------------------------------------------
 # Tela 1: preencher planilha
 # ----------------------------------------------------------------------------
 def tela_preencher(banco: pd.DataFrame | None) -> None:
-    st.subheader("1. Planilha da licitação")
-    arquivo = st.file_uploader(
-        "Planilha que será preenchida", type=["xlsx", "xlsm"], key="up_licitacao",
-        help="Arquivos .xls antigos: abra no Excel e salve como .xlsx.",
-    )
-    if arquivo is None:
-        st.info(
-            "Envie a planilha da licitação para começar. O app procura o preço de cada item no banco "
-            "da empresa e no SINAPI e devolve a planilha preenchida, com os itens sem preço destacados em cor."
+    with etapa("lic", 1, "Planilha da licitação", "Envie a planilha que será preenchida e confira as colunas encontradas."):
+        arquivo = st.file_uploader(
+            "Planilha da licitação", type=["xlsx", "xlsm"], key="up_licitacao", label_visibility="collapsed",
+            help="Arquivos .xls antigos: abra no Excel e salve como .xlsx.",
         )
-        return
-    selecao = seletor_planilha("lic", arquivo, CAMPOS_LICITACAO)
+        if arquivo is None:
+            st.markdown(COMO_FUNCIONA, unsafe_allow_html=True)
+            return
+        selecao = seletor_planilha("lic", arquivo, CAMPOS_LICITACAO)
     if selecao is None:
         return
 
-    st.subheader("2. Fontes de preço")
     tem_banco = banco is not None and not banco.empty
     estrategia = core.ESTRATEGIAS[0]
-    col_banco, col_sinapi = st.columns(2, gap="large")
-    with col_banco:
-        st.markdown("**Banco de preços da empresa** (consultado primeiro)")
-        if banco is None:
-            st.caption("Indisponível no momento. O preenchimento vai usar só o SINAPI.")
-        elif banco.empty:
-            st.caption("Ainda não há preços cadastrados. Use a aba Cadastrar preços para alimentar o banco.")
-        else:
-            st.caption(f"{fmt_int(len(banco))} preços cadastrados.")
-            estrategia = st.radio(
-                "Quando o item tiver mais de um preço no banco, usar", core.ESTRATEGIAS, horizontal=True, key="estrategia",
-                help="Mais recente: a cotação de data mais nova. Menor preço: o mais barato. Mediana: o valor do meio.",
-            )
-    with col_sinapi:
-        st.markdown("**Tabela SINAPI** (opcional, consultada depois do banco)")
-        arquivo_sinapi = st.file_uploader("Planilha do SINAPI", type=["xlsx", "xlsm"], key="up_sinapi",
-                                          label_visibility="collapsed")
-
     cfg_sinapi = None
-    if arquivo_sinapi is not None:
-        with st.expander("Colunas do SINAPI (detectadas automaticamente)"):
-            sel_sinapi = seletor_planilha("sin", arquivo_sinapi, CAMPOS_SINAPI, previa=False)
-        if sel_sinapi is not None:
-            cfg_sinapi = core.ConfigPlanilha(
-                raw=sel_sinapi.raw, aba=sel_sinapi.aba, linha_cab=sel_sinapi.linha_cab,
-                col_desc=sel_sinapi.cols["desc"], col_valor=sel_sinapi.cols["valor"],
-            )
-            st.caption(f"SINAPI: descrição na coluna {letra(cfg_sinapi.col_desc)}, preço na coluna "
-                       f"{letra(cfg_sinapi.col_valor)}, cabeçalho na linha {cfg_sinapi.linha_cab}.")
-
-    st.subheader("3. Preencher")
-    sobrescrever = st.toggle(
-        "Substituir valores que já estão na planilha", value=False,
-        help="Desligado: itens que já têm valor ficam como estão e aparecem no relatório como mantidos.",
-    )
-    sem_fonte = not tem_banco and cfg_sinapi is None
-    if sem_fonte:
-        st.warning("Não há fonte de preço disponível. Envie a tabela SINAPI ou cadastre preços no banco.")
+    with etapa("lic", 2, "Fontes de preço", "O banco da empresa é consultado primeiro. O SINAPI cobre o que faltar."):
+        col_banco, col_sinapi = st.columns(2, gap="large")
+        with col_banco:
+            st.markdown("**Banco de preços da empresa**")
+            if banco is None:
+                st.caption("Offline no momento. O preenchimento vai usar só o SINAPI.")
+            elif banco.empty:
+                st.caption("Ainda sem preços cadastrados. Use a aba Cadastrar preços para alimentar o banco.")
+            else:
+                st.caption(f"{fmt_int(len(banco))} preços cadastrados.")
+                estrategia = st.radio(
+                    "Quando o item tiver mais de um preço, usar", core.ESTRATEGIAS, horizontal=True, key="estrategia",
+                    help="Mais recente: a cotação de data mais nova. Menor preço: o mais barato. Mediana: o valor do meio.",
+                )
+        with col_sinapi:
+            st.markdown("**Tabela SINAPI** (opcional)")
+            arquivo_sinapi = st.file_uploader("Planilha do SINAPI", type=["xlsx", "xlsm"], key="up_sinapi",
+                                              label_visibility="collapsed")
+        if arquivo_sinapi is not None:
+            with st.expander("Colunas do SINAPI (encontradas automaticamente)"):
+                sel_sinapi = seletor_planilha("sin", arquivo_sinapi, CAMPOS_SINAPI, previa=False)
+            if sel_sinapi is not None:
+                cfg_sinapi = core.ConfigPlanilha(
+                    raw=sel_sinapi.raw, aba=sel_sinapi.aba, linha_cab=sel_sinapi.linha_cab,
+                    col_desc=sel_sinapi.cols["desc"], col_valor=sel_sinapi.cols["valor"],
+                )
+                st.caption(f"SINAPI: descrição na coluna {letra(cfg_sinapi.col_desc)}, preço na coluna "
+                           f"{letra(cfg_sinapi.col_valor)}, cabeçalho na linha {cfg_sinapi.linha_cab}.")
 
     assinatura = f"{arquivo.name}-{arquivo.size}"
-    if st.button("Preencher planilha", type="primary", disabled=sem_fonte):
-        cfg = core.ConfigPlanilha(
-            raw=selecao.raw, aba=selecao.aba, linha_cab=selecao.linha_cab,
-            col_desc=selecao.cols["desc"], col_valor=selecao.cols["valor"], col_qtd=selecao.cols["qtd"],
+    with etapa("lic", 3, "Preencher", "Gera uma cópia preenchida. A planilha original não é alterada."):
+        sobrescrever = st.toggle(
+            "Substituir valores que já estão na planilha", value=False,
+            help="Desligado: itens que já têm valor ficam como estão e aparecem no relatório como mantidos.",
         )
-        with st.spinner("Procurando os preços..."):
-            interno = core.montar_indice_banco(banco, estrategia) if tem_banco else core.Indice()
-            sinapi = core.montar_indice(cfg_sinapi) if cfg_sinapi is not None else core.Indice()
-            try:
-                saida, relatorio = core.preencher(arquivo.getvalue(), cfg, interno, sinapi, sobrescrever)
-            except ValueError as erro:
-                st.error(f"{erro} Confira a aba e a linha do cabeçalho e tente de novo.")
-                return
-        st.session_state["resultado"] = {
-            "assinatura": assinatura, "planilha": saida, "relatorio": relatorio,
-            "nome": f"{Path(arquivo.name).stem}_preenchida.xlsx", "xlsm": arquivo.name.lower().endswith(".xlsm"),
-        }
+        sem_fonte = not tem_banco and cfg_sinapi is None
+        if sem_fonte:
+            st.caption("Para preencher, envie a tabela SINAPI no passo 2 ou cadastre preços no banco.")
+        if st.button("Preencher planilha", type="primary", disabled=sem_fonte, icon=":material/edit_note:"):
+            cfg = core.ConfigPlanilha(
+                raw=selecao.raw, aba=selecao.aba, linha_cab=selecao.linha_cab,
+                col_desc=selecao.cols["desc"], col_valor=selecao.cols["valor"], col_qtd=selecao.cols["qtd"],
+            )
+            with st.spinner("Procurando os preços..."):
+                interno = core.montar_indice_banco(banco, estrategia) if tem_banco else core.Indice()
+                sinapi = core.montar_indice(cfg_sinapi) if cfg_sinapi is not None else core.Indice()
+                try:
+                    saida, relatorio = core.preencher(arquivo.getvalue(), cfg, interno, sinapi, sobrescrever)
+                except ValueError as erro:
+                    st.error(f"{erro} Confira a aba e a linha do cabeçalho e tente de novo.")
+                    return
+            st.session_state["resultado"] = {
+                "assinatura": assinatura, "planilha": saida, "relatorio": relatorio,
+                "nome": f"{Path(arquivo.name).stem}_preenchida.xlsx", "xlsm": arquivo.name.lower().endswith(".xlsm"),
+            }
 
     resultado = st.session_state.get("resultado")
     if resultado and resultado["assinatura"] == assinatura:
-        mostrar_resultado(resultado)
+        with etapa("lic", 4, "Resultado", "Baixe a planilha e revise os itens destacados."):
+            mostrar_resultado(resultado)
 
 
 def mostrar_resultado(resultado: dict) -> None:
     relatorio: pd.DataFrame = resultado["relatorio"]
-    st.subheader("4. Resultado")
     if relatorio.empty:
-        st.warning(
-            "Nenhum item foi encontrado abaixo do cabeçalho. Confira a linha do cabeçalho, a coluna de "
-            "descrição e, se escolheu, a coluna de quantidade."
-        )
+        st.warning("Nenhum item foi encontrado abaixo do cabeçalho. Confira a linha do cabeçalho, a coluna de "
+                   "descrição e, se escolheu, a coluna de quantidade.")
         return
 
     barra_cobertura(relatorio["Status"].value_counts(), len(relatorio))
-
-    c1, c2, _ = st.columns([1.3, 1, 1.2])
-    c1.download_button(
-        "Baixar planilha preenchida", resultado["planilha"], file_name=resultado["nome"], type="primary",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    c2.download_button(
-        "Baixar relatório", core.df_para_xlsx(relatorio), file_name=resultado["nome"].replace("_preenchida", "_relatorio"),
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    c1, c2, _ = st.columns([1.4, 1.1, 1.5])
+    c1.download_button("Baixar planilha preenchida", resultado["planilha"], file_name=resultado["nome"],
+                       type="primary", mime=XLSX_MIME, icon=":material/download:")
+    c2.download_button("Baixar relatório", core.df_para_xlsx(relatorio), mime=XLSX_MIME, icon=":material/description:",
+                       file_name=resultado["nome"].replace("_preenchida", "_relatorio"))
     if resultado["xlsm"]:
         st.caption("A planilha original tinha macros. A versão preenchida sai em .xlsx, sem as macros.")
 
@@ -487,52 +573,52 @@ def mostrar_resultado(resultado: dict) -> None:
 # ----------------------------------------------------------------------------
 # Tela 2: cadastrar preços
 # ----------------------------------------------------------------------------
+BANCO_OFFLINE = ("O cadastro e a consulta voltam a funcionar quando o banco for configurado. Enquanto isso, "
+                 "a aba <b>Preencher planilha</b> funciona normalmente com a tabela SINAPI.")
+
+
 def tela_cadastrar(engine) -> None:
     mostrar_aviso("cadastro")
     if engine is None:
-        st.error("O banco de preços não está acessível agora, então não é possível cadastrar. "
-                 "Confira a DATABASE_URL em Manage app > Settings > Secrets.")
+        estado_vazio("Banco de preços offline", BANCO_OFFLINE)
         return
     if not storage.eh_remoto(engine):
-        st.warning("Modo de teste: este banco é temporário e é apagado quando o app reinicia. "
-                   "Para guardar os preços de vez, configure a DATABASE_URL nos Secrets do Streamlit.")
+        st.caption("Modo de teste: este banco é temporário e é apagado quando o app reinicia.")
 
-    st.subheader("1. Planilha de uma licitação passada")
-    arquivo = st.file_uploader(
-        "Planilha com preços já cotados ou contratados", type=["xlsx", "xlsm"], key="up_cadastro",
-        help="Cada linha com descrição e valor unitário vira um registro no banco.",
-    )
-    if arquivo is None:
-        st.info("Envie uma planilha de licitação passada para alimentar o banco de preços. "
-                "Antes de gravar, você confere o que é novo e o que já está cadastrado.")
-        return
-    selecao = seletor_planilha("cad", arquivo, CAMPOS_CADASTRO)
+    with etapa("cad", 1, "Planilha de uma licitação passada",
+               "Cada linha com descrição e valor unitário vira um preço no banco."):
+        arquivo = st.file_uploader("Planilha com preços cotados ou contratados", type=["xlsx", "xlsm"],
+                                   key="up_cadastro", label_visibility="collapsed")
+        if arquivo is None:
+            st.caption("Antes de gravar, você confere o que é novo e o que já está cadastrado.")
+            return
+        selecao = seletor_planilha("cad", arquivo, CAMPOS_CADASTRO)
     if selecao is None:
         return
     cols = selecao.cols
 
-    st.subheader("2. Dados da licitação")
-    c1, c2 = st.columns(2)
-    origem = c1.text_input(
-        "Identificação da licitação", value=Path(arquivo.name).stem, key=f"{selecao.chave}_origem",
-        help="Ex.: Pregão 12/2025, TRE-DF. Fica gravado junto com cada preço.",
-    )
-    data_fixa = None
-    if cols["data"] is None:
-        data_fixa = c2.date_input("Data da cotação (vale para todos os itens)", value=None, format="DD/MM/YYYY",
-                                  key=f"{selecao.chave}_fixo_data")
-    else:
-        c2.caption(f"Data da cotação lida da coluna {letra(cols['data'])}.")
-    c3, c4 = st.columns(2)
-    fornecedor_fixo = vendedor_fixo = None
-    if cols["fornecedor"] is None:
-        fornecedor_fixo = c3.text_input("Fornecedor (vale para todos os itens)", key=f"{selecao.chave}_forn")
-    else:
-        c3.caption(f"Fornecedor lido da coluna {letra(cols['fornecedor'])}.")
-    if cols["vendedor"] is None:
-        vendedor_fixo = c4.text_input("Vendedor (vale para todos os itens)", key=f"{selecao.chave}_vend")
-    else:
-        c4.caption(f"Vendedor lido da coluna {letra(cols['vendedor'])}.")
+    with etapa("cad", 2, "Dados da licitação", "Informações que valem para todos os preços desta planilha."):
+        c1, c2 = st.columns(2)
+        origem = c1.text_input(
+            "Identificação da licitação", value=Path(arquivo.name).stem, key=f"{selecao.chave}_fixo_origem",
+            help="Ex.: Pregão 12/2025, TRE-DF. Fica gravado junto com cada preço.",
+        )
+        data_fixa = None
+        if cols["data"] is None:
+            data_fixa = c2.date_input("Data da cotação", value=None, format="DD/MM/YYYY",
+                                      key=f"{selecao.chave}_fixo_data")
+        else:
+            c2.caption(f"Data da cotação lida da coluna {letra(cols['data'])}.")
+        c3, c4 = st.columns(2)
+        fornecedor_fixo = vendedor_fixo = None
+        if cols["fornecedor"] is None:
+            fornecedor_fixo = c3.text_input("Fornecedor", key=f"{selecao.chave}_fixo_fornecedor")
+        else:
+            c3.caption(f"Fornecedor lido da coluna {letra(cols['fornecedor'])}.")
+        if cols["vendedor"] is None:
+            vendedor_fixo = c4.text_input("Vendedor", key=f"{selecao.chave}_fixo_vendedor")
+        else:
+            c4.caption(f"Vendedor lido da coluna {letra(cols['vendedor'])}.")
 
     mapa = core.MapaIngestao(
         linha_cab=selecao.linha_cab, col_desc=cols["desc"], col_valor=cols["valor"], col_codigo=cols["codigo"],
@@ -542,55 +628,56 @@ def tela_cadastrar(engine) -> None:
     )
     validos, ignorados = core.extrair_registros(selecao.raw, mapa)
 
-    st.subheader("3. Conferir e gravar")
-    if not validos:
-        st.warning("Nenhuma linha com descrição e valor unitário válido. Confira a linha do cabeçalho e as colunas.")
-        if ignorados:
-            st.dataframe(pd.DataFrame(ignorados), hide_index=True)
-        return
-    try:
-        situacoes = storage.classificar(engine, validos)
-    except Exception as erro:
-        st.error(f"Não foi possível consultar o banco: {erro}")
-        return
-
-    tabela = pd.DataFrame(validos)
-    tabela.insert(0, "Situação", situacoes)
-    novos = int((tabela["Situação"] == storage.SIT_NOVO).sum())
-    existentes = int((tabela["Situação"] == storage.SIT_EXISTE).sum())
-    repetidos = int((tabela["Situação"] == storage.SIT_REPETIDO).sum())
-    texto_resumo = (f"**{fmt_int(len(tabela))} preços encontrados:** {fmt_int(novos)} novos, "
-                    f"{fmt_int(existentes)} já estão no banco e {fmt_int(repetidos)} se repetem na própria planilha.")
-    if ignorados:
-        texto_resumo += f" {fmt_int(len(ignorados))} linhas foram ignoradas."
-    st.markdown(texto_resumo)
-
-    vis = pd.DataFrame({
-        "Situação": tabela["Situação"],
-        "Linha": tabela["linha_excel"],
-        "Descrição": tabela["descricao"],
-        "Valor unitário": tabela["valor_unitario"].map(brl),
-        "Fornecedor": tabela["fornecedor"],
-        "Data": pd.to_datetime(tabela["data_cotacao"], errors="coerce").dt.strftime("%d/%m/%Y").fillna(""),
-    })
-    st.dataframe(vis.style.map(_pintar(COR_SITUACAO), subset=["Situação"]), hide_index=True,
-                 column_config={"Descrição": st.column_config.TextColumn(width="large")})
-    if ignorados:
-        with st.expander(f"Linhas ignoradas ({fmt_int(len(ignorados))})"):
-            st.dataframe(pd.DataFrame(ignorados), hide_index=True)
-
-    if st.button(f"Gravar {fmt_int(novos)} preços novos no banco", type="primary", disabled=novos == 0):
-        if not origem.strip():
-            st.error("Informe a identificação da licitação antes de gravar.")
+    with etapa("cad", 3, "Conferir e gravar", "Só os preços novos são gravados. Repetidos são ignorados."):
+        if not validos:
+            st.warning("Nenhuma linha com descrição e valor unitário válido. Confira a linha do cabeçalho e as colunas.")
+            if ignorados:
+                st.dataframe(pd.DataFrame(ignorados), hide_index=True)
             return
-        with st.spinner("Gravando..."):
-            resultado = storage.inserir(engine, validos, origem.strip())
-        carregar_banco.clear()
-        avisar("cadastro", f"{fmt_int(resultado['inseridos'])} preços gravados de \"{origem.strip()}\". "
-                           "Se precisar desfazer, remova esta importação na aba Consultar banco.")
-        st.rerun()
-    if novos == 0:
-        st.caption("Todos os preços desta planilha já estão no banco.")
+        try:
+            situacoes = storage.classificar(engine, validos)
+        except Exception as erro:
+            st.error(f"Não foi possível consultar o banco: {erro}")
+            return
+
+        tabela = pd.DataFrame(validos)
+        tabela.insert(0, "Situação", situacoes)
+        novos = int((tabela["Situação"] == storage.SIT_NOVO).sum())
+        existentes = int((tabela["Situação"] == storage.SIT_EXISTE).sum())
+        repetidos = int((tabela["Situação"] == storage.SIT_REPETIDO).sum())
+        resumo = (f"**{fmt_int(len(tabela))} preços encontrados:** {fmt_int(novos)} novos, "
+                  f"{fmt_int(existentes)} já estão no banco e {fmt_int(repetidos)} se repetem na própria planilha.")
+        if ignorados:
+            resumo += f" {fmt_int(len(ignorados))} linhas foram ignoradas."
+        st.markdown(resumo)
+
+        vis = pd.DataFrame({
+            "Situação": tabela["Situação"],
+            "Linha": tabela["linha_excel"],
+            "Descrição": tabela["descricao"],
+            "Valor unitário": tabela["valor_unitario"].map(brl),
+            "Fornecedor": tabela["fornecedor"],
+            "Data": pd.to_datetime(tabela["data_cotacao"], errors="coerce").dt.strftime("%d/%m/%Y").fillna(""),
+        })
+        st.dataframe(vis.style.map(_pintar(COR_SITUACAO), subset=["Situação"]), hide_index=True,
+                     column_config={"Descrição": st.column_config.TextColumn(width="large")})
+        if ignorados:
+            with st.expander(f"Linhas ignoradas ({fmt_int(len(ignorados))})"):
+                st.dataframe(pd.DataFrame(ignorados), hide_index=True)
+
+        if novos == 0:
+            st.caption("Todos os preços desta planilha já estão no banco.")
+        if st.button(f"Gravar {fmt_int(novos)} preços novos", type="primary", disabled=novos == 0,
+                     icon=":material/save:"):
+            if not origem.strip():
+                st.error("Informe a identificação da licitação antes de gravar.")
+                return
+            with st.spinner("Gravando..."):
+                resultado = storage.inserir(engine, validos, origem.strip())
+            carregar_banco.clear()
+            avisar("cadastro", f"{fmt_int(resultado['inseridos'])} preços gravados de \"{origem.strip()}\". "
+                               "Se precisar desfazer, remova esta importação na aba Consultar banco.")
+            st.rerun()
 
 
 # ----------------------------------------------------------------------------
@@ -599,13 +686,15 @@ def tela_cadastrar(engine) -> None:
 def tela_consultar(engine, banco: pd.DataFrame | None) -> None:
     mostrar_aviso("consulta")
     if engine is None or banco is None:
-        st.error("O banco de preços não está acessível agora. Confira a DATABASE_URL em Manage app > Settings > Secrets.")
+        estado_vazio("Banco de preços offline", BANCO_OFFLINE)
         return
     if banco.empty:
-        st.info("O banco ainda está vazio. Cadastre a primeira planilha na aba Cadastrar preços.")
+        estado_vazio("O banco ainda está vazio",
+                     "Cadastre a primeira planilha de licitação na aba <b>Cadastrar preços</b>. "
+                     "Os preços aparecem aqui para busca e exportação.")
         return
 
-    busca = st.text_input("Buscar item", placeholder="Ex.: cabo flexível 2,5 mm²",
+    busca = st.text_input("Buscar item", placeholder="Ex.: cabo flexível 2,5 mm²", icon=":material/search:",
                           help="Mostra os itens que contêm todas as palavras digitadas, sem diferenciar acentos.")
     dados = banco
     termos = core.normalizar(busca).split()
@@ -628,42 +717,42 @@ def tela_consultar(engine, banco: pd.DataFrame | None) -> None:
     }).assign(_ordem=dados["descricao_norm"], _data=datas)
     exportar = exportar.sort_values(["_ordem", "_data"], ascending=[True, False]).drop(columns=["_ordem", "_data"])
 
-    st.caption(f"{fmt_int(len(exportar))} de {fmt_int(len(banco))} registros")
+    c_info, c_botao = st.columns([3, 1])
+    c_info.caption(f"{fmt_int(len(exportar))} de {fmt_int(len(banco))} registros")
+    c_botao.download_button("Exportar (.xlsx)", core.df_para_xlsx(exportar, "Banco de preços"),
+                            file_name="banco_de_precos.xlsx", mime=XLSX_MIME, icon=":material/download:")
     vis = exportar.assign(**{
         "Valor unitário": exportar["Valor unitário"].map(brl),
         "Data da cotação": pd.to_datetime(exportar["Data da cotação"]).dt.strftime("%d/%m/%Y").fillna(""),
     })
     st.dataframe(vis, hide_index=True, column_config={"Descrição": st.column_config.TextColumn(width="large")})
-    st.download_button("Exportar resultado (.xlsx)", core.df_para_xlsx(exportar, "Banco de preços"),
-                       file_name="banco_de_precos.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    st.subheader("Importações")
-    st.caption("Cada planilha cadastrada é uma importação. Se algo foi gravado errado, remova a importação "
-               "inteira e cadastre a planilha de novo.")
-    lotes = storage.listar_lotes(engine)
-    lotes["importado_em"] = pd.to_datetime(lotes["importado_em"], errors="coerce")
-    st.dataframe(
-        pd.DataFrame({
-            "Licitação": lotes["origem"],
-            "Importada em": lotes["importado_em"].dt.strftime("%d/%m/%Y %H:%M"),
-            "Preços": lotes["registros"],
-        }),
-        hide_index=True,
-    )
-    info = {r.lote: r for r in lotes.itertuples()}
-    lote = st.selectbox(
-        "Importação para remover", list(info), index=None, placeholder="Escolha uma importação",
-        format_func=lambda l: f"{info[l].origem} ({fmt_int(info[l].registros)} preços, "
-                              f"{info[l].importado_em:%d/%m/%Y %H:%M})",
-    )
-    if lote is not None:
-        confirmar = st.checkbox(f"Confirmo que quero apagar os {fmt_int(info[lote].registros)} preços desta importação")
-        if st.button("Remover importação", disabled=not confirmar):
-            removidos = storage.remover_lote(engine, lote)
-            carregar_banco.clear()
-            avisar("consulta", f"Importação removida: {fmt_int(removidos)} preços apagados do banco.")
-            st.rerun()
+    with st.expander("Importações (desfazer um cadastro)"):
+        st.caption("Cada planilha cadastrada é uma importação. Se algo foi gravado errado, remova a importação "
+                   "inteira e cadastre a planilha de novo.")
+        lotes = storage.listar_lotes(engine)
+        lotes["importado_em"] = pd.to_datetime(lotes["importado_em"], errors="coerce")
+        st.dataframe(
+            pd.DataFrame({
+                "Licitação": lotes["origem"],
+                "Importada em": lotes["importado_em"].dt.strftime("%d/%m/%Y %H:%M"),
+                "Preços": lotes["registros"],
+            }),
+            hide_index=True,
+        )
+        info = {r.lote: r for r in lotes.itertuples()}
+        lote = st.selectbox(
+            "Importação para remover", list(info), index=None, placeholder="Escolha uma importação",
+            format_func=lambda l: f"{info[l].origem} ({fmt_int(info[l].registros)} preços, "
+                                  f"{info[l].importado_em:%d/%m/%Y %H:%M})",
+        )
+        if lote is not None:
+            confirmar = st.checkbox(f"Confirmo que quero apagar os {fmt_int(info[lote].registros)} preços desta importação")
+            if st.button("Remover importação", disabled=not confirmar, icon=":material/delete:"):
+                removidos = storage.remover_lote(engine, lote)
+                carregar_banco.clear()
+                avisar("consulta", f"Importação removida: {fmt_int(removidos)} preços apagados do banco.")
+                st.rerun()
 
 
 # ----------------------------------------------------------------------------
@@ -683,20 +772,23 @@ def main() -> None:
         engine = obter_engine()
         banco = carregar_banco(engine)
     except Exception as e:  # o app continua funcionando só com o SINAPI
-        erro = e
+        engine, erro = None, e
 
-    topo(engine, banco)
-    if erro is not None:
-        st.error(f"Não foi possível conectar ao banco de preços ({type(erro).__name__}). "
-                 "O preenchimento com SINAPI continua funcionando. Confira a DATABASE_URL em Settings > Secrets.")
-
-    aba_preencher, aba_cadastrar, aba_consultar = st.tabs(["Preencher planilha", "Cadastrar preços", "Consultar banco"])
+    topo(engine, banco, erro)
+    aba_preencher, aba_cadastrar, aba_consultar = st.tabs([
+        ":material/edit_document: Preencher planilha",
+        ":material/library_add: Cadastrar preços",
+        ":material/search: Consultar banco",
+    ])
     with aba_preencher:
         tela_preencher(banco)
     with aba_cadastrar:
         tela_cadastrar(engine)
     with aba_consultar:
         tela_consultar(engine, banco)
+
+    st.markdown('<div class="atl-rodape">Ferramenta interna de orçamento da Atlântico Engenharia e Inovação.</div>',
+                unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
