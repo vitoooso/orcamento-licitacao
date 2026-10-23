@@ -371,7 +371,8 @@ def _url_banco() -> str | None:
 
 
 @st.cache_resource(show_spinner="Conectando ao banco de preços...")
-def obter_engine():
+def obter_engine(versao_esquema: int):
+    """A versão faz parte da chave do cache: mudou a estrutura do banco, abre conexão nova e atualiza as tabelas."""
     engine = storage.criar_engine(_url_banco())
     storage.inicializar(engine)
     return engine
@@ -892,7 +893,7 @@ def main() -> None:
 
     engine, banco, erro = None, None, None
     try:
-        engine = obter_engine()
+        engine = obter_engine(storage.VERSAO_ESQUEMA)
         banco = carregar_banco(engine)
     except Exception as e:  # o app continua funcionando só com o SINAPI
         engine, erro = None, e
