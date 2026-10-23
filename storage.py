@@ -66,6 +66,9 @@ def eh_remoto(engine) -> bool:
 
 # Colunas criadas depois da primeira versão: (nome, tipo SQL). O inicializar() as adiciona em bancos antigos.
 COLUNAS_NOVAS = [("fonte_codigo", "VARCHAR(50)")]
+# Aumente este número sempre que mudar a estrutura do banco (ex.: acrescentar uma coluna em COLUNAS_NOVAS).
+# O app usa o número para abrir uma conexão nova e rodar o inicializar() de novo, sem precisar de reboot.
+VERSAO_ESQUEMA = 2
 
 
 def _colunas_existentes(engine) -> set[str]:
