@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from numbers import Number
@@ -35,7 +36,12 @@ ST_JA = "Já preenchido (mantido)"
 ST_MESCLADA = "Célula de valor mesclada"
 FONTE_INTERNO = "Banco interno"
 FONTE_SINAPI = "SINAPI"
-COLUNAS_RELATORIO = ["Linha Excel", "Descrição", "Status", "Fonte", "Valor unitário", "Observação"]
+# O que é escrito na coluna de fornecedor da planilha da licitação, conforme a origem do preço
+FORNECEDOR_BANCO = "Atlântico"
+FORNECEDOR_SINAPI = "SINAPI"
+FORMATO_DATA_BANCO = "dd/mm/yyyy"
+FORMATO_MES_SINAPI = "mm/yyyy"
+COLUNAS_RELATORIO = ["Linha Excel", "Descrição", "Status", "Fonte", "Data do preço", "Valor unitário", "Observação"]
 COR_STATUS = {ST_NAO: "#FFFF00", ST_AMB: "#FFC000", ST_MESCLADA: "#FFC000", ST_JA: "#D9D9D9"}
 
 
@@ -47,6 +53,8 @@ class ConfigPlanilha:
     col_desc: int            # índice da coluna de descrição (base 0)
     col_valor: int           # índice da coluna de valor (base 0)
     col_qtd: int | None = None
+    col_fornecedor: int | None = None  # onde escrever a origem do preço (SINAPI / Atlântico)
+    col_data: int | None = None        # onde escrever a data do preço
 
 
 @dataclass
@@ -55,6 +63,7 @@ class Indice:
     valores: dict[str, float] = field(default_factory=dict)          # chave normalizada -> preço
     conflitos: dict[str, list[float]] = field(default_factory=dict)  # chave -> preços divergentes
     notas: dict[str, str] = field(default_factory=dict)              # chave -> texto de auditoria
+    datas: dict[str, date] = field(default_factory=dict)             # chave -> data do preço escolhido
 
 
 @dataclass
@@ -231,6 +240,43 @@ def _limpar_destaque(celula) -> None:
         celula.fill = PatternFill(fill_type=None)
 
 
+_MESES = {"JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
+          "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12}
+
+
+def para_mes(valor) -> date | None:
+    """Mês de referência -> 1º dia do mês. Aceita '09/2026', '9-2026', '2026-09', '202609', 'SET/2026', 'setembro de 2026'."""
+    if isinstance(valor, (datetime, date)):
+        return date(valor.year, valor.month, 1)
+    t = normalizar(valor)
+    if not t:
+        return None
+    m = re.search(r"(?<!\d)(0?[1-9]|1[0-2])\s*[/\-.]\s*(20\d{2})(?!\d)", t)
+    if m:
+        return date(int(m[2]), int(m[1]), 1)
+    m = re.search(r"(?<!\d)(20\d{2})\s*[/\-._]?\s*(0[1-9]|1[0-2])(?!\d)", t)
+    if m:
+        return date(int(m[1]), int(m[2]), 1)
+    m = re.search(r"\b(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)[A-Z]*\.?\s*(?:DE\s+)?[/\-]?\s*(20\d{2})(?!\d)", t)
+    if m:
+        return date(int(m[2]), _MESES[m[1]], 1)
+    return None
+
+
+def detectar_mes_sinapi(nome_arquivo: str, raw: pd.DataFrame) -> date | None:
+    """Procura o mês da tabela SINAPI: primeiro no topo da planilha ('Mês de coleta: 09/2026'), depois no nome do arquivo."""
+    topo = [linha.tolist() for _, linha in raw.iloc[:15].iterrows()]
+    for chaves in (("REFERENCIA", "COLETA"), ("MES ",)):
+        for valores in topo:
+            for j, v in enumerate(valores):
+                if any(k in normalizar(v) + " " for k in chaves):
+                    for candidato in valores[j:j + 4]:  # o mês pode estar na mesma célula ou nas seguintes
+                        mes = para_mes(candidato)
+                        if mes:
+                            return mes
+    return para_mes(Path(nome_arquivo or "").stem.replace("_", " "))
+
+
 def _mesma_celula(valor_openpyxl, valor_pandas) -> bool:
     """Trava de segurança: confere se a linha lida pelo pandas é a mesma que o openpyxl vai escrever."""
     if eh_formula(valor_openpyxl):
@@ -299,6 +345,12 @@ def montar_indice_banco(df: pd.DataFrame, estrategia: str) -> Indice:
             valor = float(ref["valor_unitario"])
         idx.valores[chave] = valor
         idx.notas[chave] = _nota(len(g), estrategia, ref)
+        # Data do preço: a da cotação escolhida; na mediana, a cotação mais recente do grupo
+        data_ref = ref["data_cotacao"] if ref is not None else g["data_cotacao"].max()
+        if pd.notna(data_ref):
+            idx.datas[chave] = pd.Timestamp(data_ref).date()
+            if ref is None:
+                idx.notas[chave] += f" · cotação mais recente: {idx.datas[chave]:%d/%m/%Y}"
     return idx
 
 
@@ -345,7 +397,25 @@ def extrair_registros(raw: pd.DataFrame, m: MapaIngestao) -> tuple[list[dict], l
 # ----------------------------------------------------------------------------
 # Preenchimento (escrita com openpyxl para preservar a formatação original)
 # ----------------------------------------------------------------------------
-def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi: Indice, sobrescrever: bool):
+def _escrever_extra(ws, linha: int, col: int | None, valor, formato: str | None = None) -> None:
+    """Escreve fornecedor/data ao lado do preço preenchido (ignora se a coluna não foi escolhida ou está mesclada)."""
+    if col is None:
+        return
+    celula = ws.cell(row=linha, column=col + 1)
+    if isinstance(celula, MergedCell):
+        return
+    celula.value = valor
+    if formato:
+        celula.number_format = formato
+    _limpar_destaque(celula)
+
+
+def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi: Indice, sobrescrever: bool,
+              mes_sinapi: date | None = None):
+    """Preenche a planilha. Para cada preço escrito, também registra a origem (coluna de fornecedor)
+    e a data (coluna de data), se essas colunas foram escolhidas:
+      banco interno -> 'Atlântico' e a data da cotação;  SINAPI -> 'SINAPI' e o mês de referência da tabela.
+    """
     wb = load_workbook(io.BytesIO(conteudo_lic))
     ws = wb[cfg.aba]
     # Segunda leitura só para ver o RESULTADO das fórmulas (o valor que o Excel salvou no arquivo).
@@ -400,12 +470,24 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi:
             else:
                 aviso += " (resultava em zero, vazio ou erro)"
             obs = f"{obs}; {aviso}" if obs else aviso
+        data_preco = ""
         if status == ST_OK:
             c_valor.value = valor
             if c_valor.number_format == "General":
                 c_valor.number_format = "#,##0.00"
             _limpar_destaque(c_desc)
             _limpar_destaque(c_valor)
+            if fonte == FONTE_INTERNO:
+                quando = interno.datas.get(chave)
+                _escrever_extra(ws, linha, cfg.col_fornecedor, FORNECEDOR_BANCO)
+                if quando:
+                    _escrever_extra(ws, linha, cfg.col_data, quando, FORMATO_DATA_BANCO)
+                    data_preco = f"{quando:%d/%m/%Y}"
+            else:
+                _escrever_extra(ws, linha, cfg.col_fornecedor, FORNECEDOR_SINAPI)
+                if mes_sinapi:
+                    _escrever_extra(ws, linha, cfg.col_data, mes_sinapi, FORMATO_MES_SINAPI)
+                    data_preco = f"{mes_sinapi:%m/%Y}"
         elif status == ST_JA:
             _limpar_destaque(c_desc)
             _limpar_destaque(c_valor)
@@ -417,7 +499,7 @@ def preencher(conteudo_lic: bytes, cfg: ConfigPlanilha, interno: Indice, sinapi:
 
         registros.append({
             "Linha Excel": linha, "Descrição": str(descricao), "Status": status,
-            "Fonte": fonte, "Valor unitário": valor, "Observação": obs,
+            "Fonte": fonte, "Data do preço": data_preco, "Valor unitário": valor, "Observação": obs,
         })
 
     saida = io.BytesIO()
