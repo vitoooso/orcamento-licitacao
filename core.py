@@ -39,6 +39,7 @@ FONTE_SINAPI = "SINAPI"
 # O que é escrito na coluna de fornecedor da planilha da licitação, conforme a origem do preço
 FORNECEDOR_BANCO = "Atlântico"
 FORNECEDOR_SINAPI = "SINAPI"
+FONTE_CODIGO_EMPRESA = FORNECEDOR_BANCO  # código próprio do banco da empresa
 FORMATO_DATA_BANCO = "dd/mm/yyyy"
 FORMATO_MES_SINAPI = "mm/yyyy"
 COLUNAS_RELATORIO = ["Linha Excel", "Descrição", "Status", "Fonte", "Data do preço", "Valor unitário", "Observação"]
@@ -79,6 +80,8 @@ class MapaIngestao:
     vendedor_fixo: str | None = None
     col_data: int | None = None
     data_fixa: date | None = None
+    col_fonte_codigo: int | None = None     # coluna com a base do código (SINAPI, SICRO, ORSE...)
+    fonte_codigo_fixa: str | None = None    # ou um valor único para a planilha inteira
 
 
 # ----------------------------------------------------------------------------
@@ -324,6 +327,33 @@ def _nota(n: int, estrategia: str, ref) -> str:
     return " · ".join(partes)
 
 
+SEM_FORNECEDOR = "(sem fornecedor)"
+
+
+def filtrar_banco(df: pd.DataFrame, inicio: date | None = None, fim: date | None = None,
+                  incluir_sem_data: bool = False, fornecedores: list[str] | None = None) -> pd.DataFrame:
+    """Recorte do banco antes de montar o índice.
+
+    inicio/fim: período das cotações (inclusive). Cotações sem data só entram se incluir_sem_data=True
+    (ou se não houver filtro de período). fornecedores: lista para manter; vazia/None = todos.
+    """
+    if df.empty:
+        return df
+    manter = pd.Series(True, index=df.index)
+    if inicio is not None or fim is not None:
+        datas = pd.to_datetime(df["data_cotacao"], errors="coerce")
+        dentro = datas.notna()
+        if inicio is not None:
+            dentro &= datas >= pd.Timestamp(inicio)
+        if fim is not None:
+            dentro &= datas <= pd.Timestamp(fim)
+        manter &= (dentro | datas.isna()) if incluir_sem_data else dentro
+    if fornecedores:
+        nomes = df["fornecedor"].fillna("").astype(str).str.strip().replace("", SEM_FORNECEDOR)
+        manter &= nomes.isin(fornecedores)
+    return df[manter]
+
+
 def montar_indice_banco(df: pd.DataFrame, estrategia: str) -> Indice:
     """Índice a partir do banco de preços, que pode ter VÁRIOS preços para a mesma descrição.
 
@@ -357,6 +387,24 @@ def montar_indice_banco(df: pd.DataFrame, estrategia: str) -> Indice:
 # ----------------------------------------------------------------------------
 # Extração de planilhas de licitações passadas (para alimentar o banco)
 # ----------------------------------------------------------------------------
+# Bases de referência conhecidas: grafias variadas viram um nome padrão ("sinapi " -> "SINAPI").
+BASES_CONHECIDAS = ("SINAPI", "SICRO", "ORSE", "SEINFRA", "SBC", "EMOP", "SIURB", "SUDECAP", "CPOS",
+                    "AGETOP", "GOINFRA", "IOPES", "FDE", "SETOP", "DER", "CAEMA", "COMPESA")
+
+
+def padronizar_fonte_codigo(valor) -> str:
+    """Nome da base do código, padronizado quando conhecido; outros textos ficam como foram escritos."""
+    original = re.sub(r"\s+", " ", texto(valor)).strip()
+    if not original:
+        return ""
+    chave = re.sub(r"[^A-Z0-9]", "", normalizar(original))
+    if chave in BASES_CONHECIDAS:
+        return chave
+    if chave == re.sub(r"[^A-Z0-9]", "", normalizar(FONTE_CODIGO_EMPRESA)):
+        return FONTE_CODIGO_EMPRESA
+    return original[:50]
+
+
 def extrair_registros(raw: pd.DataFrame, m: MapaIngestao) -> tuple[list[dict], list[dict]]:
     """Retorna (válidos, ignorados). Linhas totalmente vazias são descartadas em silêncio."""
     validos: list[dict] = []
@@ -380,11 +428,19 @@ def extrair_registros(raw: pd.DataFrame, m: MapaIngestao) -> tuple[list[dict], l
             continue
 
         fornecedor = texto(celula(i, m.col_fornecedor)) if m.col_fornecedor is not None else (m.fornecedor_fixo or "")
+        codigo = texto(celula(i, m.col_codigo))
+        if not codigo:
+            fonte_codigo = ""  # origem só faz sentido quando há código
+        elif m.col_fonte_codigo is not None:
+            fonte_codigo = padronizar_fonte_codigo(celula(i, m.col_fonte_codigo))
+        else:
+            fonte_codigo = padronizar_fonte_codigo(m.fonte_codigo_fixa)
         vendedor = texto(celula(i, m.col_vendedor)) if m.col_vendedor is not None else (m.vendedor_fixo or "")
         data = para_data(celula(i, m.col_data)) if m.col_data is not None else m.data_fixa
         validos.append({
             "linha_excel": i + 1,
-            "codigo": texto(celula(i, m.col_codigo)),
+            "codigo": codigo,
+            "fonte_codigo": fonte_codigo,
             "descricao": descricao,
             "valor_unitario": valor,
             "fornecedor": fornecedor,
