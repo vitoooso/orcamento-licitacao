@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from sqlalchemy import (Column, Date, DateTime, Float, Integer, MetaData, String, Table, Text,
-                        create_engine, delete, func, insert, select)
+                        create_engine, delete, func, insert, inspect, select, text)
 
 from core import normalizar
 
@@ -27,6 +27,7 @@ precos = Table(
     "precos", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("codigo", String(100)),
+    Column("fonte_codigo", String(50)),                      # base do código: SINAPI, SICRO, Atlântico...
     Column("descricao", Text, nullable=False),
     Column("descricao_norm", Text, nullable=False),          # chave de busca (já normalizada)
     Column("valor_unitario", Float, nullable=False),
@@ -63,25 +64,50 @@ def eh_remoto(engine) -> bool:
     return engine.dialect.name != "sqlite"
 
 
+# Colunas criadas depois da primeira versão: (nome, tipo SQL). O inicializar() as adiciona em bancos antigos.
+COLUNAS_NOVAS = [("fonte_codigo", "VARCHAR(50)")]
+
+
+def _colunas_existentes(engine) -> set[str]:
+    return {c["name"] for c in inspect(engine).get_columns("precos")}
+
+
 def inicializar(engine) -> None:
-    metadata.create_all(engine)  # cria a tabela se ainda não existir
+    """Cria a tabela se não existir e acrescenta colunas novas em bancos antigos, sem mexer nos dados."""
+    metadata.create_all(engine)
+    faltando = [(nome, tipo) for nome, tipo in COLUNAS_NOVAS if nome not in _colunas_existentes(engine)]
+    for nome, tipo in faltando:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE precos ADD COLUMN {nome} {tipo}"))
+        except Exception:
+            # Outra instância do app pode ter criado a coluna ao mesmo tempo; só falha se ela continuar faltando.
+            if nome not in _colunas_existentes(engine):
+                raise
 
 
 # ----------------------------------------------------------------------------
 # Registros
 # ----------------------------------------------------------------------------
 def hash_registro(r: dict) -> str:
-    """Impressão digital do registro: mesma descrição+valor+fornecedor+vendedor+data+código = mesmo registro."""
+    """Impressão digital do registro: mesma descrição+valor+fornecedor+vendedor+data+código = mesmo registro.
+
+    A origem do código só entra quando está preenchida: assim, registros gravados antes dessa coluna
+    existir continuam com a mesma impressão digital e são reconhecidos como "Já no banco".
+    """
     data = r.get("data_cotacao")
-    base = "|".join([
+    partes = [
         normalizar(r.get("codigo")),
         normalizar(r["descricao"]),
         f"{float(r['valor_unitario']):.4f}",
         normalizar(r.get("fornecedor")),
         normalizar(r.get("vendedor")),
         data.isoformat() if data else "",
-    ])
-    return hashlib.sha1(base.encode("utf-8")).hexdigest()
+    ]
+    fonte_codigo = normalizar(r.get("fonte_codigo"))
+    if fonte_codigo:
+        partes.append(f"fonte:{fonte_codigo}")
+    return hashlib.sha1("|".join(partes).encode("utf-8")).hexdigest()
 
 
 def preparar_linhas(registros: list[dict], origem: str, lote: str, agora: datetime) -> dict[str, dict]:
@@ -93,6 +119,7 @@ def preparar_linhas(registros: list[dict], origem: str, lote: str, agora: dateti
             continue
         linhas[h] = {
             "codigo": (r.get("codigo") or None) and r["codigo"][:100],
+            "fonte_codigo": (r.get("fonte_codigo") or None) and r["fonte_codigo"][:50],
             "descricao": r["descricao"],
             "descricao_norm": normalizar(r["descricao"]),
             "valor_unitario": float(r["valor_unitario"]),
