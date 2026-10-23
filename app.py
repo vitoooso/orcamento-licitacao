@@ -12,6 +12,7 @@ Logo: salve o arquivo em assets/logo.png (também aceita .svg, .jpg, .webp).
 from __future__ import annotations
 
 import base64
+from datetime import date, datetime, timedelta
 import html
 import io
 import os
@@ -254,10 +255,15 @@ CAMPOS_CADASTRO = [
     DESC,
     VALOR,
     Campo("codigo", "Código", (("CODIGO", "COD."),), obrigatorio=False),
+    Campo("fonte_codigo", "Origem do código", (("FONTE", "BANCO", "BASE", "REFERENCIA"),),
+          evitar=("DATA", "PRECO", "VALOR"), obrigatorio=False,
+          ajuda="Coluna que diz de qual base é o código: SINAPI, SICRO, ORSE..."),
     Campo("fornecedor", "Fornecedor", (("FORNECEDOR", "EMPRESA", "LICITANTE"),), obrigatorio=False),
     Campo("vendedor", "Vendedor", (("VENDEDOR", "REPRESENTANTE", "CONTATO"),), obrigatorio=False),
     Campo("data", "Data da cotação", (("DATA",),), obrigatorio=False),
 ]
+OPCOES_FONTE_CODIGO = [f"Banco da empresa ({core.FONTE_CODIGO_EMPRESA})", "SINAPI", "Outra base", "Não informar"]
+VALOR_FONTE_CODIGO = {OPCOES_FONTE_CODIGO[0]: core.FONTE_CODIGO_EMPRESA, "SINAPI": "SINAPI", "Não informar": None}
 GRUPOS_CABECALHO = (DESC.chaves[0], ("UNIT", "VALOR", "PRECO", "CUSTO"), ("QUANT", "QTD"))
 
 
@@ -456,6 +462,70 @@ def tabela_relatorio(df: pd.DataFrame) -> None:
     )
 
 
+PERIODOS = {
+    "Todo o período": None,
+    "Últimos 30 dias": {"days": 30},
+    "Últimos 90 dias": {"days": 90},
+    "Últimos 6 meses": {"months": 6},
+    "Último ano": {"months": 12},
+    "Últimos 2 anos": {"months": 24},
+    "Personalizado": "personalizado",
+}
+
+
+def hoje_brasilia() -> date:
+    return datetime.now(storage.BRT).date()
+
+
+def filtros_banco(banco: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Controles de período e fornecedor. Devolve o banco filtrado e uma descrição do filtro para o relatório."""
+    hoje = hoje_brasilia()
+    periodo = st.selectbox("Período das cotações", list(PERIODOS), key="periodo_banco",
+                           help="Só os preços cotados dentro deste período são usados no preenchimento.")
+    regra = PERIODOS[periodo]
+    inicio = fim = None
+    if regra == "personalizado":
+        intervalo = st.date_input("Intervalo", value=(hoje - timedelta(days=90), hoje), max_value=hoje,
+                                  format="DD/MM/YYYY", key="periodo_intervalo")
+        if isinstance(intervalo, (tuple, list)) and len(intervalo) == 2:
+            inicio, fim = intervalo
+        elif isinstance(intervalo, (tuple, list)) and len(intervalo) == 1:
+            inicio = intervalo[0]
+            st.caption("Escolha também a data final no calendário.")
+    elif regra:
+        inicio = (pd.Timestamp(hoje) - pd.DateOffset(**regra)).date()
+
+    incluir_sem_data = False
+    if inicio is not None or fim is not None:
+        sem_data = int(pd.to_datetime(banco["data_cotacao"], errors="coerce").isna().sum())
+        if sem_data:
+            incluir_sem_data = st.checkbox(f"Incluir {fmt_int(sem_data)} preços cadastrados sem data",
+                                           key="incluir_sem_data",
+                                           help="Sem data não dá para saber se a cotação está dentro do período.")
+
+    nomes = banco["fornecedor"].fillna("").astype(str).str.strip().replace("", core.SEM_FORNECEDOR)
+    with st.expander("Filtrar por fornecedor"):
+        fornecedores = st.multiselect("Usar só preços destes fornecedores", sorted(nomes.unique()),
+                                      placeholder="Todos os fornecedores", key="filtro_fornecedores")
+
+    filtrado = core.filtrar_banco(banco, inicio, fim, incluir_sem_data, fornecedores)
+
+    partes = []
+    if inicio is not None or fim is not None:
+        de = f"{inicio:%d/%m/%Y}" if inicio else "início"
+        ate = f"{(fim or hoje):%d/%m/%Y}"
+        partes.append(f"cotações de {de} a {ate}" + (" (incluindo sem data)" if incluir_sem_data else ""))
+    if fornecedores:
+        partes.append(f"{len(fornecedores)} fornecedor(es)")
+    descricao = ", ".join(partes) if partes else "todo o período"
+
+    if filtrado.empty:
+        st.warning("Nenhum preço do banco dentro deste filtro. O preenchimento vai usar só o SINAPI.")
+    else:
+        st.caption(f"{fmt_int(len(filtrado))} de {fmt_int(len(banco))} preços dentro do filtro ({descricao}).")
+    return filtrado, descricao
+
+
 COMO_FUNCIONA = """<div class="atl-como">
   <div><b>Envie a planilha</b><span>O arquivo .xlsx da licitação, do jeito que veio do órgão.</span></div>
   <div><b>Confira as colunas</b><span>Descrição, valor e quantidade são encontrados sozinhos. Você só confirma.</span></div>
@@ -482,6 +552,7 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
         return
 
     tem_banco = banco is not None and not banco.empty
+    banco_uso, descricao_filtro = banco, ""
     estrategia = core.ESTRATEGIAS[0]
     cfg_sinapi, mes_sinapi = None, None
     with etapa("lic", 2, "Fontes de preço", "O banco da empresa é consultado primeiro. O SINAPI cobre o que faltar."):
@@ -493,7 +564,8 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
             elif banco.empty:
                 st.caption("Ainda sem preços cadastrados. Use a aba Cadastrar preços para alimentar o banco.")
             else:
-                st.caption(f"{fmt_int(len(banco))} preços cadastrados.")
+                banco_uso, descricao_filtro = filtros_banco(banco)
+                tem_banco = not banco_uso.empty
                 estrategia = st.radio(
                     "Quando o item tiver mais de um preço, usar", core.ESTRATEGIAS, horizontal=True, key="estrategia",
                     help="Mais recente: a cotação de data mais nova. Menor preço: o mais barato. Mediana: o valor do meio.",
@@ -545,7 +617,7 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
                 col_fornecedor=selecao.cols["fornecedor"], col_data=selecao.cols["data"],
             )
             with st.spinner("Procurando os preços..."):
-                interno = core.montar_indice_banco(banco, estrategia) if tem_banco else core.Indice()
+                interno = core.montar_indice_banco(banco_uso, estrategia) if tem_banco else core.Indice()
                 sinapi = core.montar_indice(cfg_sinapi) if cfg_sinapi is not None else core.Indice()
                 try:
                     saida, relatorio = core.preencher(arquivo.getvalue(), cfg, interno, sinapi, sobrescrever,
@@ -555,6 +627,7 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
                     return
             st.session_state["resultado"] = {
                 "assinatura": assinatura, "planilha": saida, "relatorio": relatorio,
+                "filtro": f"Banco da empresa: {descricao_filtro}, critério {estrategia.lower()}." if tem_banco else "",
                 "nome": f"{Path(arquivo.name).stem}_preenchida.xlsx", "xlsm": arquivo.name.lower().endswith(".xlsm"),
             }
 
@@ -572,6 +645,8 @@ def mostrar_resultado(resultado: dict) -> None:
         return
 
     barra_cobertura(relatorio["Status"].value_counts(), len(relatorio))
+    if resultado.get("filtro"):
+        st.caption(resultado["filtro"])
     c1, c2, _ = st.columns([1.4, 1.1, 1.5])
     c1.download_button("Baixar planilha preenchida", resultado["planilha"], file_name=resultado["nome"],
                        type="primary", mime=XLSX_MIME, icon=":material/download:")
@@ -643,11 +718,32 @@ def tela_cadastrar(engine) -> None:
         else:
             c4.caption(f"Vendedor lido da coluna {letra(cols['vendedor'])}.")
 
+        fonte_codigo_fixa = None
+        if cols["codigo"] is None:
+            if cols["fonte_codigo"] is not None:
+                st.caption("A origem do código só é gravada quando a coluna de código também é escolhida no passo 1.")
+        elif cols["fonte_codigo"] is not None:
+            st.caption(f"Origem do código lida da coluna {letra(cols['fonte_codigo'])}.")
+        else:
+            c5, c6 = st.columns(2)
+            escolha_fonte = c5.radio(
+                "Origem do código (vale para todos os itens)", OPCOES_FONTE_CODIGO, index=len(OPCOES_FONTE_CODIGO) - 1,
+                key=f"{selecao.chave}_fixo_fonte_codigo",
+                help="A planilha não tem coluna com a base do código. Escolha de onde vêm os códigos desta planilha.",
+            )
+            if escolha_fonte == "Outra base":
+                fonte_codigo_fixa = c6.text_input("Nome da base", placeholder="Ex.: SICRO, ORSE",
+                                                  key=f"{selecao.chave}_fixo_fonte_outra")
+            else:
+                fonte_codigo_fixa = VALOR_FONTE_CODIGO[escolha_fonte]
+
     mapa = core.MapaIngestao(
         linha_cab=selecao.linha_cab, col_desc=cols["desc"], col_valor=cols["valor"], col_codigo=cols["codigo"],
         col_fornecedor=cols["fornecedor"], fornecedor_fixo=(fornecedor_fixo or "").strip() or None,
         col_vendedor=cols["vendedor"], vendedor_fixo=(vendedor_fixo or "").strip() or None,
         col_data=cols["data"], data_fixa=data_fixa,
+        col_fonte_codigo=cols["fonte_codigo"] if cols["codigo"] is not None else None,
+        fonte_codigo_fixa=fonte_codigo_fixa,
     )
     validos, ignorados = core.extrair_registros(selecao.raw, mapa)
 
@@ -682,6 +778,9 @@ def tela_cadastrar(engine) -> None:
             "Fornecedor": tabela["fornecedor"],
             "Data": pd.to_datetime(tabela["data_cotacao"], errors="coerce").dt.strftime("%d/%m/%Y").fillna(""),
         })
+        if cols["codigo"] is not None:
+            vis.insert(2, "Código", tabela["codigo"])
+            vis.insert(3, "Origem do código", tabela["fonte_codigo"])
         st.dataframe(vis.style.map(_pintar(COR_SITUACAO), subset=["Situação"]), hide_index=True,
                      column_config={"Descrição": st.column_config.TextColumn(width="large")})
         if ignorados:
@@ -737,6 +836,7 @@ def tela_consultar(engine, banco: pd.DataFrame | None) -> None:
         "Data da cotação": datas.dt.date,
         "Licitação": dados["origem"],
         "Código": dados["codigo"],
+        "Origem do código": dados["fonte_codigo"] if "fonte_codigo" in dados else None,
     }).assign(_ordem=dados["descricao_norm"], _data=datas)
     exportar = exportar.sort_values(["_ordem", "_data"], ascending=[True, False]).drop(columns=["_ordem", "_data"])
 
