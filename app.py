@@ -243,6 +243,11 @@ CAMPOS_LICITACAO = [
     Campo("valor", "Valor unitário (onde o preço será escrito)", VALOR.chaves, VALOR.evitar),
     Campo("qtd", "Quantidade", (("QUANT", "QTD"),), obrigatorio=False,
           ajuda="Linhas sem quantidade são tratadas como títulos de grupo e não são preenchidas."),
+    Campo("fornecedor", "Fornecedor / fonte do preço", (("FORNECEDOR", "FONTE", "ORIGEM"),), obrigatorio=False,
+          ajuda=f"Em cada item preenchido o app escreve \"{core.FORNECEDOR_SINAPI}\" ou \"{core.FORNECEDOR_BANCO}\", "
+                "conforme a origem do preço."),
+    Campo("data", "Data do preço", (("DATA",),), obrigatorio=False,
+          ajuda="SINAPI: mês de referência da tabela. Banco da empresa: data da cotação."),
 ]
 CAMPOS_SINAPI = [DESC, Campo("valor", "Preço", (("PRECO", "CUSTO", "VALOR"),), evitar=("TOTAL",))]
 CAMPOS_CADASTRO = [
@@ -478,7 +483,7 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
 
     tem_banco = banco is not None and not banco.empty
     estrategia = core.ESTRATEGIAS[0]
-    cfg_sinapi = None
+    cfg_sinapi, mes_sinapi = None, None
     with etapa("lic", 2, "Fontes de preço", "O banco da empresa é consultado primeiro. O SINAPI cobre o que faltar."):
         col_banco, col_sinapi = st.columns(2, gap="large")
         with col_banco:
@@ -505,8 +510,22 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
                     raw=sel_sinapi.raw, aba=sel_sinapi.aba, linha_cab=sel_sinapi.linha_cab,
                     col_desc=sel_sinapi.cols["desc"], col_valor=sel_sinapi.cols["valor"],
                 )
-                st.caption(f"SINAPI: descrição na coluna {letra(cfg_sinapi.col_desc)}, preço na coluna "
-                           f"{letra(cfg_sinapi.col_valor)}, cabeçalho na linha {cfg_sinapi.linha_cab}.")
+                c_mes, c_info = st.columns([1, 2])
+                sugestao = core.detectar_mes_sinapi(arquivo_sinapi.name, sel_sinapi.raw)
+                mes_texto = c_mes.text_input(
+                    "Mês de referência do SINAPI", value=f"{sugestao:%m/%Y}" if sugestao else "",
+                    placeholder="MM/AAAA", key=f"{sel_sinapi.chave}_mes",
+                    help="Vai para a coluna de data dos itens preenchidos pelo SINAPI.",
+                )
+                mes_sinapi = core.para_mes(mes_texto)
+                if mes_texto.strip() and mes_sinapi is None:
+                    c_info.warning("Mês não reconhecido. Use o formato MM/AAAA, por exemplo 09/2026.")
+                else:
+                    c_info.caption(
+                        f"Descrição na coluna {letra(cfg_sinapi.col_desc)}, preço na coluna {letra(cfg_sinapi.col_valor)}, "
+                        f"cabeçalho na linha {cfg_sinapi.linha_cab}."
+                        + ("" if sugestao else " Não encontrei o mês na tabela: informe ao lado.")
+                    )
 
     assinatura = f"{arquivo.name}-{arquivo.size}"
     with etapa("lic", 3, "Preencher", "Gera uma cópia preenchida. A planilha original não é alterada."):
@@ -517,16 +536,20 @@ def tela_preencher(banco: pd.DataFrame | None) -> None:
         sem_fonte = not tem_banco and cfg_sinapi is None
         if sem_fonte:
             st.caption("Para preencher, envie a tabela SINAPI no passo 2 ou cadastre preços no banco.")
+        elif selecao.cols["fornecedor"] is None and selecao.cols["data"] is None:
+            st.caption("Para registrar de onde veio cada preço, escolha as colunas de fornecedor e data no passo 1.")
         if st.button("Preencher planilha", type="primary", disabled=sem_fonte, icon=":material/edit_note:"):
             cfg = core.ConfigPlanilha(
                 raw=selecao.raw, aba=selecao.aba, linha_cab=selecao.linha_cab,
                 col_desc=selecao.cols["desc"], col_valor=selecao.cols["valor"], col_qtd=selecao.cols["qtd"],
+                col_fornecedor=selecao.cols["fornecedor"], col_data=selecao.cols["data"],
             )
             with st.spinner("Procurando os preços..."):
                 interno = core.montar_indice_banco(banco, estrategia) if tem_banco else core.Indice()
                 sinapi = core.montar_indice(cfg_sinapi) if cfg_sinapi is not None else core.Indice()
                 try:
-                    saida, relatorio = core.preencher(arquivo.getvalue(), cfg, interno, sinapi, sobrescrever)
+                    saida, relatorio = core.preencher(arquivo.getvalue(), cfg, interno, sinapi, sobrescrever,
+                                                      mes_sinapi=mes_sinapi)
                 except ValueError as erro:
                     st.error(f"{erro} Confira a aba e a linha do cabeçalho e tente de novo.")
                     return
